@@ -59,15 +59,15 @@ char * typemaps instead:
         void f(char *input);
 */
 
-%define INPUT_TYPEMAP(TYPE, GOTYPE)
-%typemap(gotype) TYPE *INPUT, TYPE &INPUT "GOTYPE"
+%define INPUT_TYPEMAP(TYPE, RUSTTYPE)
+%typemap(rusttype) TYPE *INPUT, TYPE &INPUT "RUSTTYPE"
 
-%typemap(in) TYPE *INPUT, TYPE &INPUT
+ %typemap(in) TYPE *INPUT, TYPE &INPUT
 %{ $1 = ($1_ltype)&$input; %}
 
 %typemap(out) TYPE *INPUT, TYPE &INPUT ""
 
-%typemap(goout) TYPE *INPUT, TYPE &INPUT ""
+%typemap(rustout) TYPE *INPUT, TYPE &INPUT ""
 
 %typemap(freearg) TYPE *INPUT, TYPE &INPUT ""
 
@@ -78,19 +78,19 @@ char * typemaps instead:
 %enddef
 
 INPUT_TYPEMAP(bool, bool);
-INPUT_TYPEMAP(signed char, int8);
+INPUT_TYPEMAP(signed char, i8);
 INPUT_TYPEMAP(char, byte);
 INPUT_TYPEMAP(unsigned char, byte);
-INPUT_TYPEMAP(short, int16);
-INPUT_TYPEMAP(unsigned short, uint16);
-INPUT_TYPEMAP(int, int);
-INPUT_TYPEMAP(unsigned int, uint);
-INPUT_TYPEMAP(long, int64);
-INPUT_TYPEMAP(unsigned long, uint64);
-INPUT_TYPEMAP(long long, int64);
-INPUT_TYPEMAP(unsigned long long, uint64);
-INPUT_TYPEMAP(float, float32);
-INPUT_TYPEMAP(double, float64);
+INPUT_TYPEMAP(short, i16);
+INPUT_TYPEMAP(unsigned short, u16);
+INPUT_TYPEMAP(int, i32);
+INPUT_TYPEMAP(unsigned int, u32);
+INPUT_TYPEMAP(long, i64);
+INPUT_TYPEMAP(unsigned long, u64);
+INPUT_TYPEMAP(long long, i64);
+INPUT_TYPEMAP(unsigned long long, u64);
+INPUT_TYPEMAP(float, f32);
+INPUT_TYPEMAP(double, f64);
 
 #undef INPUT_TYPEMAP
 
@@ -156,20 +156,20 @@ char * typemaps instead:
         void f(char *output);
 */
 
-%define OUTPUT_TYPEMAP(TYPE, GOTYPE)
-%typemap(gotype) TYPE *OUTPUT, TYPE &OUTPUT %{[]GOTYPE%}
+%define OUTPUT_TYPEMAP(TYPE, RUSTTYPE)
+%typemap(rusttype) TYPE *OUTPUT, TYPE &OUTPUT %{[]RUSTTYPE%}
 
 %typemap(in) TYPE *OUTPUT($*1_ltype temp), TYPE &OUTPUT($*1_ltype temp)
 {
   if ($input.len == 0) {
-    _swig_gopanic("array must contain at least 1 element");
+    _swig_rustpanic("array must contain at least 1 element");
   }
   $1 = &temp;
 }
 
 %typemap(out) TYPE *OUTPUT, TYPE &OUTPUT ""
 
-%typemap(goout) TYPE *INPUT, TYPE &INPUT ""
+%typemap(rustout) TYPE *INPUT, TYPE &INPUT ""
 
 %typemap(freearg) TYPE *OUTPUT, TYPE &OUTPUT ""
 
@@ -182,19 +182,19 @@ char * typemaps instead:
 %enddef
 
 OUTPUT_TYPEMAP(bool, bool);
-OUTPUT_TYPEMAP(signed char, int8);
+OUTPUT_TYPEMAP(signed char, i8);
 OUTPUT_TYPEMAP(char, byte);
 OUTPUT_TYPEMAP(unsigned char, byte);
-OUTPUT_TYPEMAP(short, int16);
-OUTPUT_TYPEMAP(unsigned short, uint16);
-OUTPUT_TYPEMAP(int, int);
-OUTPUT_TYPEMAP(unsigned int, uint);
-OUTPUT_TYPEMAP(long, int64);
-OUTPUT_TYPEMAP(unsigned long, uint64);
-OUTPUT_TYPEMAP(long long, int64);
-OUTPUT_TYPEMAP(unsigned long long, uint64);
-OUTPUT_TYPEMAP(float, float32);
-OUTPUT_TYPEMAP(double, float64);
+OUTPUT_TYPEMAP(short, i16);
+OUTPUT_TYPEMAP(unsigned short, u16);
+OUTPUT_TYPEMAP(int, i32);
+OUTPUT_TYPEMAP(unsigned int, u32);
+OUTPUT_TYPEMAP(long, i64);
+OUTPUT_TYPEMAP(unsigned long, u64);
+OUTPUT_TYPEMAP(long long, i64);
+OUTPUT_TYPEMAP(unsigned long long, u64);
+OUTPUT_TYPEMAP(float, f32);
+OUTPUT_TYPEMAP(double, f64);
 
 #undef OUTPUT_TYPEMAP
 
@@ -260,19 +260,19 @@ char * typemaps instead:
         void f(char *inout);
 */
 
-%define INOUT_TYPEMAP(TYPE, GOTYPE)
-%typemap(gotype) TYPE *INOUT, TYPE &INOUT %{[]GOTYPE%}
+%define INOUT_TYPEMAP(TYPE, RUSTTYPE)
+%typemap(rusttype) TYPE *INOUT, TYPE &INOUT %{[]RUSTTYPE%}
 
 %typemap(in) TYPE *INOUT, TYPE &INOUT {
   if ($input.len == 0) {
-    _swig_gopanic("array must contain at least 1 element");
+    _swig_rustpanic("array must contain at least 1 element");
   }
   $1 = ($1_ltype) $input.array;
 }
 
 %typemap(out) TYPE *INOUT, TYPE &INOUT ""
 
-%typemap(goout) TYPE *INOUT, TYPE &INOUT ""
+%typemap(rustout) TYPE *INOUT, TYPE &INOUT ""
 
 %typemap(freearg) TYPE *INOUT, TYPE &INOUT ""
 
@@ -281,18 +281,18 @@ char * typemaps instead:
 %enddef
 
 INOUT_TYPEMAP(bool, bool);
-INOUT_TYPEMAP(signed char, int8);
+INOUT_TYPEMAP(signed char, i8);
 INOUT_TYPEMAP(char, byte);
 INOUT_TYPEMAP(unsigned char, byte);
-INOUT_TYPEMAP(short, int16);
-INOUT_TYPEMAP(unsigned short, uint16);
-INOUT_TYPEMAP(int, int);
-INOUT_TYPEMAP(unsigned int, uint);
-INOUT_TYPEMAP(long, int64);
-INOUT_TYPEMAP(unsigned long, uint64);
-INOUT_TYPEMAP(long long, int64);
-INOUT_TYPEMAP(unsigned long long, uint64);
-INOUT_TYPEMAP(float, float32);
-INOUT_TYPEMAP(double, float64);
+INOUT_TYPEMAP(short, i16);
+INOUT_TYPEMAP(unsigned short, u16);
+INOUT_TYPEMAP(int, i32);
+INOUT_TYPEMAP(unsigned int, u32);
+INOUT_TYPEMAP(long, i64);
+INOUT_TYPEMAP(unsigned long, u64);
+INOUT_TYPEMAP(long long, i64);
+INOUT_TYPEMAP(unsigned long long, u64);
+INOUT_TYPEMAP(float, f32);
+INOUT_TYPEMAP(double, f64);
 
 #undef INOUT_TYPEMAP

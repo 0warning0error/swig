@@ -338,5 +338,6 @@
 /* please leave 890-899 free for Go */
 
 /* -- User defined warnings (900 - 999) -- */
+#define WARN_RUST_NAME_CONFLICT               901
 
 #endif

@@ -24,6 +24,7 @@ Rust Options (available with -rust)\n\
      -safe-wrapper       - Generate safe wrapper layer (default: on)\n\
      -ffi-only           - Only generate FFI declarations\n\
      -no-directors       - Disable director support\n\
+     -trait-overload     - Use trait-based overload resolution (Rust-idiomatic)\n\
 ";
 
 class RUST : public Language {
@@ -55,6 +56,7 @@ public:
     proxy_flag(true),
     static_flag(false),
     variable_wrapper_flag(false),
+    trait_overload_flag(false),
     class_name(NULL),
     class_node(NULL),
     proxy_class_def(NULL),
@@ -139,6 +141,9 @@ public:
           } else {
             Swig_arg_error();
           }
+        } else if (strcmp(argv[i], "-trait-overload") == 0) {
+          Swig_mark_arg(i);
+          trait_overload_flag = true;
         } else if (strcmp(argv[i], "-help") == 0) {
           Printf(stdout, "%s", usage);
         }
@@ -704,6 +709,22 @@ public:
     
     // Generate impl block
     emitRustImpl(n);
+
+    // Generate trait-based overload resolution if enabled
+    if (trait_overload_flag) {
+      Hash *overload_info = buildOverloadInfo(n);
+      emitOverloadTraits(n, overload_info);
+      emitOverloadTraitImpls(n, overload_info);
+      
+      // Generate entry points in a separate impl block
+      if (First(overload_info).key) {
+        Printf(f_wrapper_code, "impl %s {\n", class_name);
+        emitOverloadEntryPoints(n, overload_info);
+        Printf(f_wrapper_code, "}\n\n");
+      }
+      
+      Delete(overload_info);
+    }
 
     // Generate upcast functions for additional base classes (multiple inheritance)
     if (baselist && Len(baselist) > 1) {
@@ -1678,7 +1699,13 @@ private:
           int current_index = GetInt(method_indices, mname);
           SetInt(method_indices, mname, current_index + 1);
           
-          // Generate method name with suffix if overloaded
+          // Skip overloaded methods if using trait-based overload resolution
+          // They will be handled by the unified entry point
+          if (trait_overload_flag && total_count > 1) {
+            continue;
+          }
+          
+          // Generate method name with suffix if overloaded (legacy mode)
           String *final_mname;
           if (total_count > 1) {
             // Add type-based suffix for overloaded methods
@@ -1858,7 +1885,12 @@ private:
           int current_index = GetInt(method_indices, mname);
           SetInt(method_indices, mname, current_index + 1);
           
-          // Generate method name with suffix if overloaded
+          // Skip overloaded methods if using trait-based overload resolution
+          if (trait_overload_flag && total_count > 1) {
+            continue;
+          }
+          
+          // Generate method name with suffix if overloaded (legacy mode)
           String *final_mname;
           if (total_count > 1) {
             String *suffix = emitOverloadSuffix(params);
@@ -1933,6 +1965,210 @@ private:
     Delete(method_indices);
 
     Printf(f_wrapper_code, "}\n\n");
+  }
+
+  /* ----------------------------------------------------------------------------- 
+   * emitOverloadTraits()
+   * 
+   * Generate trait definitions for overloaded methods (Trait-based overload resolution).
+   * For a method like: void bar(int), void bar(const char*)
+   * Generates: pub trait Foo_bar { type Output; fn call(self, foo: &mut Foo) -> Self::Output; }
+   * ----------------------------------------------------------------------------- */
+  void emitOverloadTraits(Node *n, Hash *overload_info) {
+    String *class_name = Getattr(n, "sym:name");
+    
+    // Iterate over all overloaded method names
+    for (Iterator it = First(overload_info); it.key; it = Next(it)) {
+      String *method_name = it.key;
+      List *overloads = (List *) it.item;
+      
+      // Skip if not overloaded (only one variant)
+      if (Len(overloads) <= 1) continue;
+      
+      // Generate trait for this overloaded method
+      // Trait name: ClassName_methodName
+      Printf(f_wrapper_code, "/// Trait for overload resolution of %s::%s\n", class_name, method_name);
+      Printf(f_wrapper_code, "pub trait %s_%s {\n", class_name, method_name);
+      Printf(f_wrapper_code, "    type Output;\n");
+      Printf(f_wrapper_code, "    fn call(self, obj: &mut %s) -> Self::Output;\n", class_name);
+      Printf(f_wrapper_code, "}\n\n");
+    }
+  }
+
+  /* ----------------------------------------------------------------------------- 
+   * emitOverloadTraitImpls()
+   * 
+   * Generate trait implementations for each overload variant.
+   * For: void bar(int x) -> impl Foo_bar for i32 { ... }
+   * For: void bar(const char* s) -> impl Foo_bar for &str { ... }
+   * For: void bar(int x, int y) -> impl Foo_bar for (i32, i32) { ... }
+   * ----------------------------------------------------------------------------- */
+  void emitOverloadTraitImpls(Node *n, Hash *overload_info) {
+    String *class_name = Getattr(n, "sym:name");
+    
+    for (Iterator it = First(overload_info); it.key; it = Next(it)) {
+      String *method_name = it.key;
+      List *overloads = (List *) it.item;
+      
+      // Skip if not overloaded
+      if (Len(overloads) <= 1) continue;
+      
+      // Generate impl for each overload
+      for (Iterator oit = First(overloads); oit.item; oit = Next(oit)) {
+        Node *method_node = (Node *) oit.item;
+        
+        ParmList *params = Getattr(method_node, "parms");
+        SwigType *return_type = Getattr(method_node, "type");
+        String *wname = Getattr(method_node, "wrap:name");
+        
+        // Determine the Rust type for this overload's parameters
+        // Single parameter: use the parameter type directly
+        // Multiple parameters: use a tuple type
+        String *impl_type = NewString("");
+        int param_count = 0;
+        
+        for (Parm *p = params; p; p = nextSibling(p)) {
+          String *pname = Getattr(p, "name");
+          SwigType *ptype = Getattr(p, "type");
+          
+          // Skip self parameter if present
+          if (pname && (Cmp(pname, "self") == 0 || Cmp(pname, "this") == 0)) continue;
+          if (SwigType_ispointer(ptype) && param_count == 0) {
+            // First param might be self pointer, check type
+            String *base = SwigType_base(ptype);
+            if (Cmp(base, class_name) == 0) {
+              Delete(base);
+              continue;
+            }
+            Delete(base);
+          }
+          
+          String *rust_type = getRustUserType(ptype);
+          if (param_count > 0) {
+            Append(impl_type, ", ");
+          }
+          Append(impl_type, rust_type);
+          param_count++;
+          Delete(rust_type);
+        }
+        
+        // Generate impl block
+        String *trait_name = NewStringf("%s_%s", class_name, method_name);
+        
+        if (param_count == 0) {
+          // No parameters - use () unit type
+          Printf(f_wrapper_code, "impl %s for () {\n", trait_name);
+        } else if (param_count == 1) {
+          // Single parameter - use the type directly
+          Printf(f_wrapper_code, "impl %s for %s {\n", trait_name, impl_type);
+        } else {
+          // Multiple parameters - use tuple
+          Printf(f_wrapper_code, "impl %s for (%s) {\n", trait_name, impl_type);
+        }
+        
+        // Output type
+        Printf(f_wrapper_code, "    type Output = ");
+        if (return_type && SwigType_type(return_type) != T_VOID) {
+          String *rust_ret = getRustUserType(return_type);
+          Printf(f_wrapper_code, "%s", rust_ret);
+          Delete(rust_ret);
+        } else {
+          Printf(f_wrapper_code, "()");
+        }
+        Printf(f_wrapper_code, ";\n");
+        
+        // call method
+        Printf(f_wrapper_code, "    fn call(self, obj: &mut %s) -> Self::Output {\n", class_name);
+        Printf(f_wrapper_code, "        unsafe { ffi::%s(obj.ptr", wname);
+        
+        // Add parameters
+        if (param_count == 0) {
+          // No parameters
+        } else if (param_count == 1) {
+          // Single parameter - use self directly
+          Printf(f_wrapper_code, ", self");
+        } else {
+          // Multiple parameters - unpack tuple
+          for (int i = 0; i < param_count; i++) {
+            Printf(f_wrapper_code, ", self.%d", i);
+          }
+        }
+        
+        Printf(f_wrapper_code, ") }\n");
+        Printf(f_wrapper_code, "    }\n");
+        Printf(f_wrapper_code, "}\n\n");
+        
+        Delete(impl_type);
+        Delete(trait_name);
+      }
+    }
+  }
+
+  /* ----------------------------------------------------------------------------- 
+   * emitOverloadEntryPoints()
+   * 
+   * Generate unified entry point methods for overloaded functions.
+   * For: void bar(int), void bar(const char*)
+   * Generates: pub fn bar<P: Foo_bar>(&mut self, p: P) -> P::Output { p.call(self) }
+   * ----------------------------------------------------------------------------- */
+  void emitOverloadEntryPoints(Node *n, Hash *overload_info) {
+    String *class_name = Getattr(n, "sym:name");
+    
+    for (Iterator it = First(overload_info); it.key; it = Next(it)) {
+      String *method_name = it.key;
+      List *overloads = (List *) it.item;
+      
+      // Skip if not overloaded
+      if (Len(overloads) <= 1) continue;
+      
+      // Get info from first overload for const-ness
+      Node *first_method = (Node *) Getitem(overloads, 0);
+      String *decl = Getattr(first_method, "decl");
+      bool is_const_method = (decl && Strstr(decl, "q(const)"));
+      
+      // Generate entry point
+      String *trait_name = NewStringf("%s_%s", class_name, method_name);
+      String *self_type = is_const_method ? NewString("&self") : NewString("&mut self");
+      
+      Printf(f_wrapper_code, "    /// Unified entry point for overloaded method %s\n", method_name);
+      Printf(f_wrapper_code, "    pub fn %s<P: %s>(%s, p: P) -> P::Output {\n", method_name, trait_name, self_type);
+      Printf(f_wrapper_code, "        p.call(self)\n");
+      Printf(f_wrapper_code, "    }\n\n");
+      
+      Delete(trait_name);
+      Delete(self_type);
+    }
+  }
+
+  /* ----------------------------------------------------------------------------- 
+   * buildOverloadInfo()
+   * 
+   * Build a hash table mapping method names to lists of overload nodes.
+   * Returns a new Hash that must be deleted by caller.
+   * ----------------------------------------------------------------------------- */
+  Hash *buildOverloadInfo(Node *n) {
+    Hash *overload_info = NewHash();
+    
+    for (Node *child = firstChild(n); child; child = nextSibling(child)) {
+      if (Strcmp(nodeType(child), "cdecl") == 0) {
+        if (GetFlag(child, "ismember") && !GetFlag(child, "static")) {
+          String *decl = Getattr(child, "decl");
+          if (decl && SwigType_isfunction(decl)) {
+            String *mname = Getattr(child, "sym:name");
+            if (mname) {
+              List *overloads = Getattr(overload_info, mname);
+              if (!overloads) {
+                overloads = NewList();
+                Setattr(overload_info, mname, overloads);
+              }
+              Append(overloads, child);
+            }
+          }
+        }
+      }
+    }
+    
+    return overload_info;
   }
 
   /* ----------------------------------------------------------------------------- 
@@ -2538,6 +2774,7 @@ private:
   bool proxy_flag;
   bool static_flag;                 // Flag for static member functions
   bool variable_wrapper_flag;       // Flag for variable wrapper
+  bool trait_overload_flag;         // Flag for trait-based overload resolution
 
   String *class_name;
   Node *class_node;

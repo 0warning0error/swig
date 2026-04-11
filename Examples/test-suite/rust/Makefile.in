@@ -1,0 +1,53 @@
+#######################################################################
+# Makefile for Rust test-suite
+#######################################################################
+
+LANGUAGE      = rust
+SCRIPTSUFFIX  = _runme.rs
+
+srcdir        = @srcdir@
+top_srcdir    = @top_srcdir@
+top_builddir  = @top_builddir@
+
+include $(srcdir)/../common.mk
+
+# Rust specific tests
+CPP_TEST_CASES = \
+	enums \
+	enum_thorough \
+	exception_order \
+	li_std_string \
+	li_std_vector \
+	primitive_types \
+	struct_value
+
+C_TEST_CASES = \
+	enums \
+	primitive_types
+
+# Broken tests - need investigation
+CPP_SKIPPED_CASES = \
+	director_exception \
+	threads
+
+# Tests requiring Rust standard library features not available in 1.0
+RUST_NEWER_TEST_CASES = \
+	li_std_wstring
+
+check: $(C_TEST_CASES) $(CPP_TEST_CASES)
+
+# Custom rule for Rust test execution
+run_test: $(srcdir)/$(SCRIPTPREFIX)$*$(SCRIPTSUFFIX)
+	@echo "Running Rust test: $*"
+	@rustc --edition 2018 -o $*_runme $<
+
+%.rs: %.i
+	$(SWIG) -rust -c++ -module $* $<
+
+clean:
+	rm -f *_wrap.cxx *.rs *_runme
+
+distclean: clean
+	rm -f Makefile
+
+.PHONY: check clean distclean run_test

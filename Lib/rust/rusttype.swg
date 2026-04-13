@@ -254,13 +254,14 @@
 
 /* -----------------------------------------------------------------------------
  * Value types (passed by value)
+ * For return by value, we need to allocate on heap to return a pointer.
  * ----------------------------------------------------------------------------- */
 
 %typemap(rusttype) SWIGTYPE                         "$&1_type"
 %typemap(rsffitype) SWIGTYPE                        "*mut c_void"
 %typemap(cout) SWIGTYPE                             "void *"
 %typemap(in) SWIGTYPE                             "$1 = ($1_ltype)$input;"
-%typemap(out) SWIGTYPE                            "$result = $1;"
+%typemap(out) SWIGTYPE                            "$result = (void *)new $1_type($1);"
 
 /* -----------------------------------------------------------------------------
  * String types

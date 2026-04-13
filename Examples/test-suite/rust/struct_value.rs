@@ -12,7 +12,11 @@ mod ffi {
     use std::os::raw::*;
 
     extern "C" {
-        pub fn Rust_x__SWIG_0() -> c_int;
+        pub fn Rust_Foo_x_set__SWIG_0(jarg1: *mut c_void, jarg2: c_int);
+    }
+
+    extern "C" {
+        pub fn Rust_Foo_x_get__SWIG_0(jarg1: *mut c_void) -> c_int;
     }
 
     extern "C" {
@@ -24,11 +28,19 @@ mod ffi {
     }
 
     extern "C" {
-        pub fn Rust_a__SWIG_0() -> *mut c_void;
+        pub fn Rust_Bar_a_set__SWIG_0(jarg1: *mut c_void, jarg2: *const c_void);
     }
 
     extern "C" {
-        pub fn Rust_b__SWIG_0() -> *mut c_void;
+        pub fn Rust_Bar_a_get__SWIG_0(jarg1: *mut c_void) -> *const c_void;
+    }
+
+    extern "C" {
+        pub fn Rust_Bar_b_set__SWIG_0(jarg1: *mut c_void, jarg2: *const c_void);
+    }
+
+    extern "C" {
+        pub fn Rust_Bar_b_get__SWIG_0(jarg1: *mut c_void) -> *const c_void;
     }
 
     extern "C" {
@@ -41,6 +53,8 @@ mod ffi {
 
 }
 
+use std::os::raw::*;
+
 // Safe wrapper functions
 
 /// Rust wrapper for C++ class Foo
@@ -52,6 +66,18 @@ pub struct Foo {
 
 /// Trait defining the interface for C++ class Foo
 pub trait FooTrait {
+}
+
+impl Foo {
+    pub fn set_x(&self, x: i32) {
+        unsafe { ffi::Rust_Foo_x_set__SWIG_0(self.ptr, x) }
+    }
+}
+
+impl Foo {
+    pub fn x(&self) -> i32 {
+        unsafe { ffi::Rust_Foo_x_get__SWIG_0(self.ptr) }
+    }
 }
 
 impl Foo {
@@ -92,6 +118,30 @@ pub struct Bar {
 
 /// Trait defining the interface for C++ class Bar
 pub trait BarTrait {
+}
+
+impl Bar {
+    pub fn set_a(&self, a: &$*1_type) {
+        unsafe { ffi::Rust_Bar_a_set__SWIG_0(self.ptr, a) }
+    }
+}
+
+impl Bar {
+    pub fn a(&self) -> &$*1_type {
+        unsafe { ffi::Rust_Bar_a_get__SWIG_0(self.ptr) }
+    }
+}
+
+impl Bar {
+    pub fn set_b(&self, b: &$*1_type) {
+        unsafe { ffi::Rust_Bar_b_set__SWIG_0(self.ptr, b) }
+    }
+}
+
+impl Bar {
+    pub fn b(&self) -> &$*1_type {
+        unsafe { ffi::Rust_Bar_b_get__SWIG_0(self.ptr) }
+    }
 }
 
 impl Bar {

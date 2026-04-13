@@ -85,6 +85,8 @@ mod ffi {
 
 }
 
+use std::os::raw::*;
+
 // Safe wrapper functions
 
 pub fn test_bool_bool(b: bool) -> bool {

@@ -92,14 +92,16 @@ def run_test(swig_exe, test_name, is_cpp=True, is_rust_specific=False, verbose=F
     cmd.extend(['-outdir', str(RUST_TEST_DIR)])
     cmd.append(str(test_file))
     
+    # Set environment for SWIG_LIB
+    env = os.environ.copy()
     if SWIG_LIB:
-        cmd.insert(1, f'-I{SWIG_LIB}')
+        env['SWIG_LIB'] = SWIG_LIB
     
     if verbose:
         print(f"  Running: {' '.join(cmd)}")
     
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, env=env)
         if result.returncode != 0:
             print(f"FAIL: {test_name} - SWIG failed")
             if verbose:

@@ -25,6 +25,9 @@ Rust Options (available with -rust)\n\
      -ffi-only           - Only generate FFI declarations\n\
      -no-directors       - Disable director support\n\
      -trait-overload     - Use trait-based overload resolution (Rust-idiomatic)\n\
+     -director-vtable    - Use associated const vtable for directors (default, zero overhead)\n\
+     -director-thin      - Use thin vtable for directors (Box<dyn Trait> based)\n\
+     -director-boxed     - Use Box<Box<dyn Trait>> for directors (simpler)\n\
 ";
 
 class RUST : public Language {
@@ -57,6 +60,8 @@ public:
     static_flag(false),
     variable_wrapper_flag(false),
     trait_overload_flag(false),
+    director_thin_flag(false),  // Thin vtable mode
+    director_vtable_flag(true), // Default: Associated const vtable mode (zero overhead, requires Rust 1.20+)
     class_name(NULL),
     class_node(NULL),
     proxy_class_def(NULL),
@@ -73,8 +78,12 @@ public:
     n_directors(0),
     first_class_dmethod(0),
     curr_class_dmethod(0),
+    director_callbacks(NULL),
+    director_rust_callbacks(NULL),
+    director_vtable_fields(NULL),
     swig_types_hash(NULL),
-    filenames_list(NULL) {
+    filenames_list(NULL),
+    class_method_names(NULL) {
     /* For now, multiple inheritance in directors is disabled.
        This should be easy to implement though. */
     director_multiple_inheritance = 0;
@@ -144,6 +153,18 @@ public:
         } else if (strcmp(argv[i], "-trait-overload") == 0) {
           Swig_mark_arg(i);
           trait_overload_flag = true;
+        } else if (strcmp(argv[i], "-director-thin") == 0) {
+          Swig_mark_arg(i);
+          director_thin_flag = true;
+          director_vtable_flag = false;
+        } else if (strcmp(argv[i], "-director-boxed") == 0) {
+          Swig_mark_arg(i);
+          director_thin_flag = false;
+          director_vtable_flag = false;
+        } else if (strcmp(argv[i], "-director-vtable") == 0) {
+          Swig_mark_arg(i);
+          director_vtable_flag = true;
+          director_thin_flag = false;  // vtable mode is mutually exclusive with thin/boxed
         } else if (strcmp(argv[i], "-help") == 0) {
           Printf(stdout, "%s", usage);
         }
@@ -193,6 +214,22 @@ public:
       Exit(EXIT_FAILURE);
     }
 
+    // Initialize output files first
+    f_runtime = NewString("");
+    f_init = NewString("");
+    f_header = NewString("");
+    f_wrappers = NewString("");
+    f_directors_h = NewString("");
+    f_directors = NewString("");
+    f_runtime_h = NULL;  // Will be set if directors enabled
+
+    // Rust-specific output sections
+    f_ffi_begin = NewString("");
+    f_ffi_imports = NewString("");
+    f_ffi_code = NewString("");
+    f_wrapper_begin = NewString("");
+    f_wrapper_code = NewString("");
+
     if (Swig_directors_enabled()) {
       if (!outfile_h) {
         Printf(stderr, "Unable to determine outfile_h\n");
@@ -204,21 +241,6 @@ public:
         Exit(EXIT_FAILURE);
       }
     }
-
-    // Initialize output sections
-    f_runtime = NewString("");
-    f_init = NewString("");
-    f_header = NewString("");
-    f_wrappers = NewString("");
-    f_directors_h = NewString("");
-    f_directors = NewString("");
-
-    // Rust-specific output sections
-    f_ffi_begin = NewString("");
-    f_ffi_imports = NewString("");
-    f_ffi_code = NewString("");
-    f_wrapper_begin = NewString("");
-    f_wrapper_code = NewString("");
 
     // Register file targets
     Swig_register_filebyname("header", f_header);
@@ -582,6 +604,28 @@ public:
     // Close function definition
     Printf(f->def, ") {");
 
+    // Director support: add upcall variable for director methods
+    // This is needed when CWRAP_DIRECTOR_TWO_CALLS is used, which generates
+    // code like: if (upcall) { Base::method(); } else { method(); }
+    bool director_method = is_member && GetFlag(n, "virtual") && Swig_directors_enabled();
+    bool is_director_class = false;
+    if (is_member && Swig_directors_enabled()) {
+      // Check if the class has director enabled
+      Node *parent = Getattr(n, "parentNode");
+      if (parent && GetFlag(parent, "feature:director")) {
+        is_director_class = true;
+      }
+    }
+    
+    if (is_director_class && !is_constructor && !is_destructor) {
+      // Add director pointer and upcall variable
+      Node *parent = Getattr(n, "parentNode");
+      String *dirname = directorClassName(parent);
+      Wrapper_add_local(f, "director", "Swig::Director *director = SWIG_DIRECTOR_CAST(arg1)");
+      Wrapper_add_local(f, "upcall", "bool upcall = false");
+      Printf(f->code, "upcall = (director != nullptr);\n");
+    }
+
     // Emit the function call with return value handling
     if (!is_void_return) {
       // For constructors, manually declare result variable with correct type
@@ -667,6 +711,10 @@ public:
     class_name = Getattr(n, "sym:name");
     class_node = n;
     
+    // Initialize method name set for collision detection
+    class_method_names = NewHash();
+    collectClassMethodNames(n);
+    
     // Save old namespace and set current namespace
     String *old_nspace = current_nspace;
     current_nspace = Getattr(n, "sym:nspace");
@@ -736,6 +784,12 @@ public:
 
     class_name = NULL;
     class_node = NULL;
+    
+    // Clean up method name set
+    if (class_method_names) {
+      Delete(class_method_names);
+      class_method_names = NULL;
+    }
     
     // Restore old namespace
     current_nspace = old_nspace;
@@ -822,16 +876,7 @@ public:
    * ----------------------------------------------------------------------------- */
   virtual int variableHandler(Node *n) {
     variable_wrapper_flag = true;
-    
-    // Generate getter
-    functionWrapper(n);
-
-    // Generate setter if not const
-    if (!GetFlag(n, "constant")) {
-      // Create setter node and generate
-      // (simplified for now)
-    }
-
+    Language::variableHandler(n);
     variable_wrapper_flag = false;
     return SWIG_OK;
   }
@@ -869,48 +914,80 @@ public:
    * Process an enum declaration.
    * Supports namespaces mapped to Rust mod.
    * Handles anonymous enums (skips them or generates constants).
+   * For class-scoped enums, generates independent names like ClassName_EnumName.
    * ----------------------------------------------------------------------------- */
   virtual int enumDeclaration(Node *n) {
     String *name = Getattr(n, "sym:name");
     String *nspace = Getattr(n, "sym:nspace");
     
+    // Check if this is a class-scoped enum
+    Node *current_class = getCurrentClass();
+    String *class_prefix = NULL;
+    if (current_class) {
+      String *class_name = Getattr(current_class, "sym:name");
+      if (class_name) {
+        class_prefix = Copy(class_name);
+      }
+    }
+    
     // Skip anonymous enums (names starting with $ or empty)
     if (!name || Len(name) == 0 || Strstr(name, "$")) {
       // For anonymous enums, generate constants instead
+      int anon_value = 0;
       for (Node *child = firstChild(n); child; child = nextSibling(child)) {
-        if (Strcmp(nodeType(child), "enumvalue") == 0) {
+        // Note: SWIG uses "enumitem" as the node type for enum values
+        if (Strcmp(nodeType(child), "enumitem") == 0) {
           String *vname = Getattr(child, "sym:name");
           String *value = Getattr(child, "enumvalue");
           if (vname) {
             // Open namespace mod if needed
             addOpenMod(nspace, f_wrapper_code);
             
-            if (value) {
+            // Use explicit value if provided, otherwise use auto-increment
+            if (value && Len(value) > 0) {
               Printf(f_wrapper_code, "pub const %s: i32 = %s;\n", vname, value);
             } else {
-              Printf(f_wrapper_code, "pub const %s: i32 = 0;\n", vname);
+              Printf(f_wrapper_code, "pub const %s: i32 = %d;\n", vname, anon_value);
             }
+            anon_value++;
             
             // Close namespace mod if needed
             addCloseMod(nspace, f_wrapper_code);
           }
         }
       }
+      // Don't call Language::enumDeclaration for same reason as regular enums
+      if (class_prefix) Delete(class_prefix);
       return SWIG_OK;
     }
     
     // Count enum values
+    // Note: SWIG uses "enumitem" as the node type for enum values, not "enumvalue"
     int value_count = 0;
     for (Node *child = firstChild(n); child; child = nextSibling(child)) {
-      if (Strcmp(nodeType(child), "enumvalue") == 0) {
+      if (Strcmp(nodeType(child), "enumitem") == 0) {
         value_count++;
       }
     }
     
     // Skip empty enums
     if (value_count == 0) {
+      // Don't call Language::enumDeclaration for same reason
+      if (class_prefix) Delete(class_prefix);
       return SWIG_OK;
     }
+    
+    // Generate the enum name
+    // For class-scoped enums, prefix with class name (e.g., EnumClass_Status)
+    String *enum_name;
+    if (class_prefix) {
+      enum_name = NewStringf("%s_%s", class_prefix, name);
+    } else {
+      enum_name = Copy(name);
+    }
+    
+    // Store the generated Rust enum name for later use in type references
+    Setattr(n, "rust:enumname", enum_name);
     
     // Open namespace mod if needed
     addOpenMod(nspace, f_wrapper_code);
@@ -918,11 +995,12 @@ public:
     // Generate Rust enum
     Printf(f_wrapper_code, "#[repr(C)]\n");
     Printf(f_wrapper_code, "#[derive(Debug, Copy, Clone, PartialEq, Eq)]\n");
-    Printf(f_wrapper_code, "pub enum %s {\n", name);
+    Printf(f_wrapper_code, "pub enum %s {\n", enum_name);
     
     // Process enum values
+    // Note: SWIG uses "enumitem" as the node type for enum values
     for (Node *child = firstChild(n); child; child = nextSibling(child)) {
-      if (Strcmp(nodeType(child), "enumvalue") == 0) {
+      if (Strcmp(nodeType(child), "enumitem") == 0) {
         String *vname = Getattr(child, "sym:name");
         String *value = Getattr(child, "enumvalue");
         if (vname) {
@@ -939,6 +1017,18 @@ public:
     
     // Close namespace mod if needed
     addCloseMod(nspace, f_wrapper_code);
+    
+    // Note: We don't call Language::enumDeclaration(n) here because:
+    // 1. We already handled enum values in the Rust enum above
+    // 2. Calling base class would trigger enumvalueDeclaration -> constantWrapper
+    //    which generates incorrect Rust constants like "pub const RED: i32 = RED;"
+    // 
+    // If we need the base class processing for other reasons (symbol table, etc.),
+    // we can selectively call specific base class methods.
+    
+    // Cleanup
+    Delete(enum_name);
+    if (class_prefix) Delete(class_prefix);
     
     return SWIG_OK;
   }
@@ -1032,9 +1122,15 @@ private:
    * 
    * Get Rust user-visible type from a SWIG type.
    * This returns user-friendly types like i32, i64, etc. for use in trait/impl signatures.
+   * For custom types (classes/structs), returns the wrapper type name.
    * ----------------------------------------------------------------------------- */
   String *getRustUserType(SwigType *t) {
     if (!t) return NewString("*mut c_void");
+    
+    // Check for pointer/reference types first - these become opaque pointers
+    if (SwigType_ispointer(t) || SwigType_isreference(t)) {
+      return NewString("*mut c_void");
+    }
     
     // Handle basic types
     switch (SwigType_type(t)) {
@@ -1067,9 +1163,26 @@ private:
         return NewString("f64");
       case T_VOID:
         return NewString("()");
+      case T_USER:
+        // For user-defined types (classes/structs), return the type name as wrapper
+        {
+          String *base = SwigType_base(t);
+          String *clean = cleanTypeName(base);
+          Delete(base);
+          return clean;
+        }
       default:
-        // For unknown types, return opaque pointer
-        return NewString("*mut c_void");
+        // For other unknown types, try to get the base name
+        {
+          String *base = SwigType_base(t);
+          if (base && Len(base) > 0) {
+            String *clean = cleanTypeName(base);
+            Delete(base);
+            return clean;
+          }
+          if (base) Delete(base);
+          return NewString("*mut c_void");
+        }
     }
   }
 
@@ -1112,6 +1225,7 @@ private:
    * 
    * Clean a type name by removing C/C++ keywords like enum, struct, class.
    * Also handles types that have these keywords embedded in the name string.
+   * For class-scoped types like "EnumClass::Status", replaces "::" with "_".
    * Returns a new string that should be deleted by the caller.
    * ----------------------------------------------------------------------------- */
   String *cleanTypeName(String *type_name) {
@@ -1141,6 +1255,12 @@ private:
       String *temp = NewString(Char(result) + 4);
       Delete(result);
       result = temp;
+    }
+    
+    // Replace C++ scope separator "::" with "_" for class-scoped types
+    // e.g., "EnumClass::Status" -> "EnumClass_Status"
+    if (Strstr(result, "::")) {
+      Replaceall(result, "::", "_");
     }
     
     return result;
@@ -1273,6 +1393,7 @@ private:
 
     // Write safe wrapper code
     if (safe_wrapper_flag) {
+      Printf(f_rust, "use std::os::raw::*;\n\n");  // Import types needed by wrapper code
       Printf(f_rust, "// Safe wrapper functions\n\n");
       Dump(f_wrapper_code, f_rust);
     }
@@ -1351,6 +1472,112 @@ private:
    * Generate safe Rust wrapper function for global (non-member) functions.
    * Member functions are handled separately in emitRustImpl.
    * Handles:
+  /* ----------------------------------------------------------------------------- 
+   * collectClassMethodNames()
+   * 
+   * Collect all method names in a class for collision detection.
+   * This includes member functions and static member functions.
+   * ----------------------------------------------------------------------------- */
+  void collectClassMethodNames(Node *class_node) {
+    if (!class_node) return;
+    
+    for (Node *child = firstChild(class_node); child; child = nextSibling(child)) {
+      String *node_type = nodeType(child);
+      
+      // Check for member functions (cdecl with function decl)
+      if (Strcmp(node_type, "cdecl") == 0) {
+        String *decl = Getattr(child, "decl");
+        if (decl && SwigType_isfunction(decl)) {
+          String *mname = Getattr(child, "sym:name");
+          if (mname) {
+            Setattr(class_method_names, mname, "1");
+          }
+        }
+      }
+      // Also check for constructors and destructors
+      else if (Strcmp(node_type, "constructor") == 0 || Strcmp(node_type, "destructor") == 0) {
+        String *mname = Getattr(child, "sym:name");
+        if (mname) {
+          Setattr(class_method_names, mname, "1");
+        }
+      }
+    }
+  }
+
+  /* ----------------------------------------------------------------------------- 
+   * getUniqueMethodName()
+   * 
+   * Get a unique method name that doesn't conflict with existing methods.
+   * Naming priority for getter: field -> get_field -> field_var
+   * Naming priority for setter: set_field -> field_set -> set_field_var
+   * ----------------------------------------------------------------------------- */
+  String *getUniqueMethodName(String *field_name, bool is_getter) {
+    if (!field_name || !class_method_names) {
+      return is_getter ? Copy(field_name) : NewStringf("set_%s", field_name);
+    }
+    
+    String *candidate = NULL;
+    
+    if (is_getter) {
+      // Try: field
+      candidate = Copy(field_name);
+      if (!Getattr(class_method_names, candidate)) {
+        return candidate;
+      }
+      Delete(candidate);
+      
+      // Try: get_field
+      candidate = NewStringf("get_%s", field_name);
+      if (!Getattr(class_method_names, candidate)) {
+        return candidate;
+      }
+      Delete(candidate);
+      
+      // Try: field_var
+      candidate = NewStringf("%s_var", field_name);
+      if (!Getattr(class_method_names, candidate)) {
+        return candidate;
+      }
+      Delete(candidate);
+      
+      // Fallback: field_getter
+      candidate = NewStringf("%s_getter", field_name);
+      return candidate;
+    } else {
+      // Setter
+      // Try: set_field
+      candidate = NewStringf("set_%s", field_name);
+      if (!Getattr(class_method_names, candidate)) {
+        return candidate;
+      }
+      Delete(candidate);
+      
+      // Try: field_set
+      candidate = NewStringf("%s_set", field_name);
+      if (!Getattr(class_method_names, candidate)) {
+        return candidate;
+      }
+      Delete(candidate);
+      
+      // Try: set_field_var
+      candidate = NewStringf("set_%s_var", field_name);
+      if (!Getattr(class_method_names, candidate)) {
+        return candidate;
+      }
+      Delete(candidate);
+      
+      // Fallback: field_setter
+      candidate = NewStringf("%s_setter", field_name);
+      return candidate;
+    }
+  }
+
+  /* ----------------------------------------------------------------------------- 
+   * emitRustSafeWrapper()
+   * 
+   * Generate safe Rust wrapper function for global (non-member) functions.
+   * Member functions are handled separately in emitRustImpl.
+   * Handles:
    *   - Global functions
    *   - Static member functions (associated functions)
    *   - Overloaded functions (adds type-based suffix)
@@ -1360,6 +1587,8 @@ private:
     ParmList *l = Getattr(n, "parms");
     bool is_member = GetFlag(n, "ismember");
     bool is_static = GetFlag(n, "static") || static_flag;
+    bool is_member_set = GetFlag(n, "memberset");
+    bool is_member_get = GetFlag(n, "memberget");
     String *view = Getattr(n, "view");
     String *nodeType = Getattr(n, "nodeType");
     bool is_constructor = (view && Cmp(view, "constructorhandler") == 0) ||
@@ -1385,14 +1614,16 @@ private:
     }
     
     // Skip non-static member functions - they are handled in emitRustImpl
-    if (is_member && !is_static) {
+    // BUT: member variable accessors (getter/setter) should NOT be skipped
+    if (is_member && !is_static && !is_member_set && !is_member_get) {
       return;
     }
     
     // IMPORTANT: Check if the first parameter is a self pointer (pointer to a class type)
     // This is the most reliable way to detect member functions in SWIG
     // For member functions, the first parameter is the "this" pointer
-    if (l && !is_static) {
+    // BUT: member variable accessors (getter/setter) should be processed, not skipped
+    if (l && !is_static && !is_member_set && !is_member_get) {
       Parm *first_parm = l;
       SwigType *ptype = Getattr(first_parm, "type");
       String *lname = Getattr(first_parm, "lname");
@@ -1410,6 +1641,7 @@ private:
     }
     
     // For static member functions, we need the class name for the impl block
+    // Also for member variable accessors
     String *class_impl_name = NULL;
     if (is_member && is_static) {
       class_impl_name = Getattr(n, "parent:sym:name");
@@ -1417,13 +1649,53 @@ private:
         class_impl_name = Getattr(Getattr(n, "parentNode"), "sym:name");
       }
     }
+    
+    // For member variable accessors, get class name and field name
+    // Function names are like "ClassName_field_get" or "ClassName_field_set"
+    String *field_name = NULL;
+    if (is_member_get || is_member_set) {
+      // Get class name from parent node
+      class_impl_name = Getattr(n, "parent:sym:name");
+      if (!class_impl_name) {
+        class_impl_name = Getattr(Getattr(n, "parentNode"), "sym:name");
+      }
+      
+      // Extract field name from symname
+      // Format: ClassName_field_get or ClassName_field_set
+      if (symname && class_impl_name) {
+        String *prefix = NewStringf("%s_", class_impl_name);
+        if (Strstr(symname, prefix) == Char(symname)) {
+          // Remove class prefix
+          String *rest = NewString(Char(symname) + Len(prefix));
+          // Remove _get or _set suffix
+          int len = Len(rest);
+          if (len > 4) {
+            const char *end = Char(rest) + len - 4;
+            if (strcmp(end, "_get") == 0 || strcmp(end, "_set") == 0) {
+              field_name = NewStringf("%.*s", len - 4, Char(rest));
+            }
+          }
+          Delete(rest);
+        }
+        Delete(prefix);
+      }
+    }
 
-    // Determine function name - handle overloads
-    String *func_name = Copy(symname);
+    // Determine function name - handle overloads and naming collisions
+    String *func_name = NULL;
+    
+    // For member variable accessors, use collision-aware naming
+    if ((is_member_get || is_member_set) && field_name) {
+      func_name = getUniqueMethodName(field_name, is_member_get);
+    } else {
+      func_name = Copy(symname);
+    }
+    
     String *overname = Getattr(n, "sym:overname");
     
     // If this is an overloaded function, add type suffix
-    if (overname && Len(overname) > 0) {
+    // BUT: for member variable accessors, we should NOT add overload suffix
+    if (overname && Len(overname) > 0 && !is_member_get && !is_member_set) {
       // Generate suffix based on parameter types
       String *suffix = emitOverloadSuffix(l);
       if (suffix && Len(suffix) > 0) {
@@ -1435,7 +1707,7 @@ private:
 
     // Generate function signature
     if (class_impl_name) {
-      // Static member function - generate inside impl block
+      // Static member function or member variable accessor - generate inside impl block
       Printf(f_wrapper_code, "impl %s {\n", class_impl_name);
       Printf(f_wrapper_code, "    pub fn %s(", func_name);
     } else {
@@ -1448,8 +1720,20 @@ private:
     Parm *p = l;
     int arg_num = 0;
 
-    // Process parameters for signature
-    for (int i = 0; i < num_arguments && p; i++) {
+    // For member variable accessors, first parameter is self
+    if (is_member_get || is_member_set) {
+      Printf(f_wrapper_code, "&self");
+      arg_num = 1;
+      // Skip the first parameter (self pointer)
+      if (p && Getattr(p, "tmap:in:next")) {
+        p = Getattr(p, "tmap:in:next");
+      } else if (p) {
+        p = nextSibling(p);
+      }
+    }
+
+    // Process remaining parameters for signature
+    for (int i = arg_num; i < num_arguments && p; i++) {
       // Skip parameters with numinputs=0
       while (p && checkAttribute(p, "tmap:in:numinputs", "0")) {
         p = Getattr(p, "tmap:in:next");
@@ -1500,7 +1784,20 @@ private:
     // Pass parameters
     arg_num = 0;
     p = l;
-    for (int i = 0; i < num_arguments && p; i++) {
+    
+    // For member variable accessors, first parameter is self.ptr
+    if (is_member_get || is_member_set) {
+      Printf(f_wrapper_code, "self.ptr");
+      arg_num = 1;
+      // Skip the first parameter (self pointer)
+      if (p && Getattr(p, "tmap:in:next")) {
+        p = Getattr(p, "tmap:in:next");
+      } else if (p) {
+        p = nextSibling(p);
+      }
+    }
+
+    for (int i = arg_num; i < num_arguments && p; i++) {
       // Skip parameters with numinputs=0
       while (p && checkAttribute(p, "tmap:in:numinputs", "0")) {
         p = Getattr(p, "tmap:in:next");
@@ -1536,6 +1833,7 @@ private:
     }
     
     Delete(func_name);
+    if (field_name) Delete(field_name);
   }
 
   /* ----------------------------------------------------------------------------- 
@@ -1561,14 +1859,15 @@ private:
         String *clean_base = cleanTypeName(base_type);
         Printf(simple_type, "_%s", clean_base);
         Delete(clean_base);
+      } else if (Strstr(type_str, "double")) {
+        // Check double BEFORE int (since "double" contains "int" substring)
+        Printf(simple_type, "_f64");
+      } else if (Strstr(type_str, "float")) {
+        Printf(simple_type, "_f32");
       } else if (Strstr(type_str, "int")) {
         Printf(simple_type, "_int");
       } else if (Strstr(type_str, "char")) {
         Printf(simple_type, "_str");
-      } else if (Strstr(type_str, "double")) {
-        Printf(simple_type, "_f64");
-      } else if (Strstr(type_str, "float")) {
-        Printf(simple_type, "_f32");
       } else if (Strstr(type_str, "bool")) {
         Printf(simple_type, "_bool");
       } else if (Strstr(type_str, "long")) {
@@ -1687,8 +1986,13 @@ private:
           ParmList *params = Getattr(child, "parms");
 
           // Determine self type based on const-ness
+          // Use the same const detection logic as emitRustImpl for consistency
           bool is_const_method = false;
-          if (decl && Strstr(decl, "q(const)")) {
+          SwigType *child_type = Getattr(child, "type");
+          if (child_type && SwigType_isconst(child_type)) {
+            is_const_method = true;
+          }
+          if (decl && Strstr(decl, "r.q(const)")) {
             is_const_method = true;
           }
           
@@ -1718,26 +2022,13 @@ private:
 
           Printf(f_wrapper_code, "    fn %s(%s", final_mname, self_type);
 
-          // Add parameters (skip first parameter which is the self pointer)
-          // The self parameter in SWIG's representation is the first param with name "self" or a pointer type
+          // Add parameters
+          // Note: For class member functions, the raw params don't include the 'this' pointer
+          // So we don't need to skip the first parameter
           int num_params = 0;
-          bool first_param = true;
           for (Parm *p = params; p; p = nextSibling(p)) {
             String *pname = Getattr(p, "name");
             SwigType *ptype = Getattr(p, "type");
-            
-            // Skip the self parameter (first parameter that is a pointer to the class)
-            if (first_param) {
-              first_param = false;
-              // Check if this looks like a self parameter
-              if (pname && (Cmp(pname, "self") == 0 || Cmp(pname, "this") == 0)) {
-                continue;
-              }
-              // Also skip if the type is a pointer (likely self pointer)
-              if (SwigType_ispointer(ptype) || SwigType_isreference(ptype)) {
-                continue;
-              }
-            }
             
             // Get Rust type using typemap lookup
             // Note: lname may be NULL if parameters haven't been processed by emit_parameter_variables
@@ -1752,7 +2043,7 @@ private:
               rust_type = getRustUserType(ptype);
             }
             
-            // Add comma before parameter (first param after self needs comma, subsequent params too)
+            // Add comma before parameter
             Printf(f_wrapper_code, ", ");
             
             // Use pname if available, otherwise use a generated name
@@ -1766,8 +2057,19 @@ private:
           // Return type
           if (mtype && SwigType_type(mtype) != T_VOID) {
             String *ret_type = Swig_typemap_lookup("rusttype", child, "", 0);
-            if (!ret_type || Len(ret_type) == 0) {
-              ret_type = getRustType(mtype);
+            if (!ret_type || Len(ret_type) == 0 || Strstr(ret_type, "$")) {
+              // Typemap not found or contains unresolved variables
+              // Use our own type resolution
+              ret_type = getRustUserType(mtype);
+            } else {
+              // Check if the type string looks invalid (e.g., "PODType *" with space)
+              if (Strstr(ret_type, " ")) {
+                // Invalid Rust type, use fallback
+                ret_type = getRustUserType(mtype);
+              } else {
+                // Process the type (handle SWIGENUM etc.)
+                ret_type = processRustType(ret_type, mtype);
+              }
             }
             if (ret_type && Len(ret_type) > 0) {
               Printf(f_wrapper_code, " -> %s", ret_type);
@@ -1932,8 +2234,14 @@ private:
           bool has_return = false;
           if (mtype && SwigType_type(mtype) != T_VOID) {
             String *ret_type = Swig_typemap_lookup("rusttype", child, "", 0);
-            if (!ret_type || Len(ret_type) == 0) {
-              ret_type = getRustType(mtype);
+            if (!ret_type || Len(ret_type) == 0 || Strstr(ret_type, "$")) {
+              // Typemap not found or contains unresolved variables
+              ret_type = getRustUserType(mtype);
+            } else if (Strstr(ret_type, " ")) {
+              // Invalid Rust type (e.g., "PODType *")
+              ret_type = getRustUserType(mtype);
+            } else {
+              ret_type = processRustType(ret_type, mtype);
             }
             if (ret_type && Len(ret_type) > 0) {
               Printf(f_wrapper_code, " -> %s", ret_type);
@@ -1943,16 +2251,58 @@ private:
 
           Printf(f_wrapper_code, " {\n");
           
-          // Generate FFI call - always pass self.ptr as first argument
-          Printf(f_wrapper_code, "        unsafe { ffi::%s(self.ptr", wname);
-
-          // Add parameters (pass all method parameters after self.ptr)
-          for (Parm *p = params; p; p = nextSibling(p)) {
-            String *pname = Getattr(p, "name");
-            Printf(f_wrapper_code, ", %s", pname ? pname : "arg");
+          // Generate FFI call
+          // For custom return types, we need to wrap the result
+          Printf(f_wrapper_code, "        ");
+          
+          if (has_return) {
+            // Check if return type is a custom type (not basic type)
+            SwigType *return_type = Getattr(child, "type");
+            bool is_custom_type = false;
+            String *return_type_name = NULL;
+            
+            if (return_type && SwigType_type(return_type) == T_USER) {
+              is_custom_type = true;
+              return_type_name = getRustUserType(return_type);
+            }
+            
+            if (is_custom_type && return_type_name) {
+              // Wrap the pointer result in the struct
+              Printf(f_wrapper_code, "%s { ptr: unsafe { ffi::%s(self.ptr", return_type_name, wname);
+              
+              // Add parameters
+              for (Parm *p = params; p; p = nextSibling(p)) {
+                String *pname = Getattr(p, "name");
+                Printf(f_wrapper_code, ", %s", pname ? pname : "arg");
+              }
+              
+              Printf(f_wrapper_code, ") } }\n");
+              Delete(return_type_name);
+            } else {
+              // Basic type return - just call FFI
+              Printf(f_wrapper_code, "unsafe { ffi::%s(self.ptr", wname);
+              
+              // Add parameters
+              for (Parm *p = params; p; p = nextSibling(p)) {
+                String *pname = Getattr(p, "name");
+                Printf(f_wrapper_code, ", %s", pname ? pname : "arg");
+              }
+              
+              Printf(f_wrapper_code, ") }\n");
+            }
+          } else {
+            // No return value
+            Printf(f_wrapper_code, "unsafe { ffi::%s(self.ptr", wname);
+            
+            // Add parameters
+            for (Parm *p = params; p; p = nextSibling(p)) {
+              String *pname = Getattr(p, "name");
+              Printf(f_wrapper_code, ", %s", pname ? pname : "arg");
+            }
+            
+            Printf(f_wrapper_code, ") }\n");
           }
-
-          Printf(f_wrapper_code, ") }\n");
+          
           Printf(f_wrapper_code, "    }\n");
 
           Delete(self_type);
@@ -2231,35 +2581,37 @@ private:
     // Generate constructor signature
     Printf(f_wrapper_code, "    pub fn %s(", ctor_name);
 
-    // Add parameters
-    if (l && num_arguments > 0) {
-      Parm *p = l;
-      int arg_num = 0;
-      for (int i = 0; i < num_arguments && p; i++) {
-        while (p && checkAttribute(p, "tmap:in:numinputs", "0")) {
-          p = Getattr(p, "tmap:in:next");
+    // Add parameters - use a more robust approach
+    int arg_num = 0;
+    if (l) {
+      for (Parm *p = l; p; p = nextSibling(p)) {
+        // Skip parameters with numinputs=0
+        if (checkAttribute(p, "tmap:in:numinputs", "0")) {
+          continue;
         }
         
-        if (!p) break;
-
         String *pname = Getattr(p, "name");
         String *ln = Getattr(p, "lname");
+        SwigType *ptype = Getattr(p, "type");
+        
+        // Get Rust type - try typemap first, then use getRustUserType as fallback
         String *rust_type = Getattr(p, "tmap:rusttype");
-        if (!rust_type) {
-          rust_type = NewString("*mut c_void");
+        if (!rust_type || Len(rust_type) == 0) {
+          // Fallback: generate based on SWIG type
+          rust_type = getRustUserType(ptype);
+        } else {
+          // Process the type (handle SWIGENUM etc.)
+          rust_type = processRustType(rust_type, ptype);
         }
 
         if (arg_num > 0) {
           Printf(f_wrapper_code, ", ");
         }
-        Printf(f_wrapper_code, "%s: %s", pname ? pname : ln, rust_type);
+        
+        // Use lname (which is set by SWIG) or pname, or generate a name
+        String *arg_name = ln ? ln : (pname ? pname : NewStringf("arg%d", arg_num));
+        Printf(f_wrapper_code, "%s: %s", arg_name, rust_type);
         arg_num++;
-
-        if (Getattr(p, "tmap:in:next")) {
-          p = Getattr(p, "tmap:in:next");
-        } else {
-          p = nextSibling(p);
-        }
       }
     }
 
@@ -2269,30 +2621,25 @@ private:
     // Generate FFI call with parameters
     Printf(f_wrapper_code, "            ptr: unsafe { ffi::%s(", wname);
     
-    if (l && num_arguments > 0) {
-      Parm *p = l;
-      int arg_num = 0;
-      for (int i = 0; i < num_arguments && p; i++) {
-        while (p && checkAttribute(p, "tmap:in:numinputs", "0")) {
-          p = Getattr(p, "tmap:in:next");
+    arg_num = 0;
+    if (l) {
+      for (Parm *p = l; p; p = nextSibling(p)) {
+        // Skip parameters with numinputs=0
+        if (checkAttribute(p, "tmap:in:numinputs", "0")) {
+          continue;
         }
         
-        if (!p) break;
-
         String *pname = Getattr(p, "name");
         String *ln = Getattr(p, "lname");
 
         if (arg_num > 0) {
           Printf(f_wrapper_code, ", ");
         }
-        Printf(f_wrapper_code, "%s", pname ? pname : ln);
+        
+        // Use lname (which is set by SWIG) or pname
+        String *arg_name = ln ? ln : (pname ? pname : NewStringf("arg%d", arg_num));
+        Printf(f_wrapper_code, "%s", arg_name);
         arg_num++;
-
-        if (Getattr(p, "tmap:in:next")) {
-          p = Getattr(p, "tmap:in:next");
-        } else {
-          p = nextSibling(p);
-        }
       }
     }
     
@@ -2422,6 +2769,11 @@ private:
    * Generates:
    *   - C++ director class declaration in header
    *   - Rust director struct and trait
+   * 
+   * Supports per-class director mode configuration via features:
+   *   %feature("director:vtable") ClassName;  // Use VTable mode for this class
+   *   %feature("director:thin") ClassName;    // Use thin mode for this class
+   *   %feature("director:boxed") ClassName;   // Use boxed mode for this class
    * ----------------------------------------------------------------------------- */
   int classDirectorInit(Node *n) {
     // Set up director constructor code
@@ -2432,15 +2784,48 @@ private:
     String *classtype = Getattr(n, "classtype");
     String *dirclassname = directorClassName(n);
 
+    // Check for per-class director mode features (override global settings)
+    bool use_vtable = director_vtable_flag;
+    bool use_thin = director_thin_flag;
+    
+    if (GetFlag(n, "feature:director:vtable")) {
+      use_vtable = true;
+      use_thin = false;
+    } else if (GetFlag(n, "feature:director:thin")) {
+      use_vtable = false;
+      use_thin = true;
+    } else if (GetFlag(n, "feature:director:boxed")) {
+      use_vtable = false;
+      use_thin = false;
+    }
+    // Save the determined mode for use in other methods
+    Setattr(n, "rust:director:vtable", use_vtable ? NewString("1") : NULL);
+    Setattr(n, "rust:director:thin", use_thin ? NewString("1") : NULL);
+
     // Generate C++ director class declaration
+    // VTable mode: no VTable struct in C++, just callback function pointers
     Printf(f_directors_h, "class %s : public %s, public Swig::Director {\n", dirclassname, classtype);
     Printf(f_directors_h, "public:\n");
-
+    // Note: constructor and destructor declarations are handled by classDirectorConstructor and Language base class
+    
     // Store director class name for later use
     Setattr(n, "director:name", dirclassname);
+    
+    // Initialize callback buffers for this class
+    director_callbacks = NewString("");
+    director_rust_callbacks = NewString("");
+    director_vtable_fields = NewString("");
+    director_vtable_inits = NewString("");
+    director_vtable_thunks = NewString("");
+    director_vtable_fields_cpp = NewString("");  // C++ version of VTable fields
+
+    if (use_vtable) {
+      // Associated const VTable mode: VTable struct will be generated in classDirectorEnd
+      // after we know all the methods
+    }
 
     // Generate Rust director support
-    // Director trait for Rust implementations
+    // Director trait for Rust implementations (generated first, before VTable)
     Printf(f_wrapper_code, "/// Trait for Rust implementations of %s that can be used as Director callbacks\n", classname);
     Printf(f_wrapper_code, "/// \n");
     Printf(f_wrapper_code, "/// # Safety\n");
@@ -2453,6 +2838,14 @@ private:
     Printf(f_wrapper_code, "pub trait %sDirector {\n", classname);
 
     // We'll add methods in classDirectorMethod
+
+    if (use_thin) {
+      // Thin vtable mode: VTable will be generated in classDirectorEnd after trait is closed
+    } else if (use_vtable) {
+      // VTable mode: VTable struct and VTableProvider will be generated in classDirectorEnd
+    } else {
+      // Boxed mode: no explicit VTable, use Box<Box<dyn Trait>>
+    }
 
     return Language::classDirectorInit(n);
   }
@@ -2470,44 +2863,278 @@ private:
     String *classname = Getattr(n, "sym:name");
     String *dirclassname = directorClassName(n);
 
+    // Get per-class director mode settings (set in classDirectorInit)
+    bool use_vtable = GetFlag(n, "rust:director:vtable");
+    bool use_thin = GetFlag(n, "rust:director:thin");
+
     // Close the Director trait
     Printf(f_wrapper_code, "}\n\n");
 
-    // Generate new_with_trait constructor in Rust
-    Printf(f_wrapper_code, "impl %s {\n", classname);
-    Printf(f_wrapper_code, "    /// Create a new %s with a Rust Director implementation\n", classname);
-    Printf(f_wrapper_code, "    /// \n");
-    Printf(f_wrapper_code, "    /// # Arguments\n");
-    Printf(f_wrapper_code, "    /// * `director` - A Rust implementation of %sDirector\n", classname);
-    Printf(f_wrapper_code, "    /// \n");
-    Printf(f_wrapper_code, "    /// # Safety\n");
-    Printf(f_wrapper_code, "    /// The returned %s holds a C++ object that calls back into Rust.\n", classname);
-    Printf(f_wrapper_code, "    /// The director must remain valid for the lifetime of the %s.\n", classname);
-    Printf(f_wrapper_code, "    pub fn new_with_trait<D: %sDirector + 'static>(director: D) -> Self {\n", classname);
-    Printf(f_wrapper_code, "        let director_box = Box::new(director);\n");
-    Printf(f_wrapper_code, "        let director_ptr = Box::into_raw(director_box) as *mut c_void;\n");
-    Printf(f_wrapper_code, "        Self {\n");
-    Printf(f_wrapper_code, "            ptr: unsafe { ffi::%s_new_director(director_ptr) },\n", dirclassname);
-    Printf(f_wrapper_code, "        }\n");
-    Printf(f_wrapper_code, "    }\n");
-    Printf(f_wrapper_code, "}\n\n");
+    if (use_vtable) {
+      // Associated const VTable mode
+      // This mode uses Rust's associated constants to provide a static VTable
+      // for each implementing type, achieving zero overhead abstraction
+      
+      // Generate VTable struct definition with all fields
+      Printf(f_wrapper_code, "/// VTable for %s director callbacks\n", classname);
+      Printf(f_wrapper_code, "/// Each field is a function pointer that calls the corresponding trait method\n");
+      Printf(f_wrapper_code, "#[repr(C)]\n");
+      Printf(f_wrapper_code, "pub struct %sVTable {\n", classname);
+      // Output VTable fields
+      if (director_vtable_fields && Len(director_vtable_fields) > 0) {
+        Dump(director_vtable_fields, f_wrapper_code);
+        Delete(director_vtable_fields);
+        director_vtable_fields = NULL;
+      }
+      Printf(f_wrapper_code, "}\n\n");
+      
+      // Output VTable thunk functions
+      if (director_vtable_thunks && Len(director_vtable_thunks) > 0) {
+        Dump(director_vtable_thunks, f_wrapper_code);
+        Delete(director_vtable_thunks);
+        director_vtable_thunks = NULL;
+      }
+      
+      // Generate VTableProvider trait with associated const VTABLE
+      Printf(f_wrapper_code, "/// Trait that provides a static VTable for %sDirector implementations\n", classname);
+      Printf(f_wrapper_code, "/// Each implementing type automatically gets a VTable through blanket impl\n");
+      Printf(f_wrapper_code, "pub trait %sVTableProvider: %sDirector + Sized {\n", classname, classname);
+      Printf(f_wrapper_code, "    const VTABLE: %sVTable = %sVTable {\n", classname, classname);
+      // Generate VTable initializers - we need to iterate through method names again
+      // The director_vtable_inits buffer was populated in classDirectorMethod
+      if (director_vtable_inits && Len(director_vtable_inits) > 0) {
+        Dump(director_vtable_inits, f_wrapper_code);
+        Delete(director_vtable_inits);
+        director_vtable_inits = NULL;
+      }
+      Printf(f_wrapper_code, "    };\n");
+      Printf(f_wrapper_code, "}\n\n");
+      
+      // Blanket impl: all Sized types that implement Director get VTableProvider automatically
+      Printf(f_wrapper_code, "/// Blanket implementation: all Sized types implementing %sDirector get VTableProvider\n", classname);
+      Printf(f_wrapper_code, "impl<T: %sDirector + Sized> %sVTableProvider for T {}\n\n", classname, classname);
+      
+      // Generate new_with_vtable constructor
+      Printf(f_wrapper_code, "impl %s {\n", classname);
+      Printf(f_wrapper_code, "    /// Create a new %s with a Rust Director implementation using VTable\n", classname);
+      Printf(f_wrapper_code, "    /// \n");
+      Printf(f_wrapper_code, "    /// This uses associated constants for zero-overhead virtual dispatch.\n");
+      Printf(f_wrapper_code, "    /// Requires Rust 1.20+\n");
+      Printf(f_wrapper_code, "    pub fn new_with_vtable<D: %sDirector + Sized + 'static>(director: D) -> Self {\n", classname);
+      Printf(f_wrapper_code, "        // Get the VTable through the VTableProvider trait\n");
+      Printf(f_wrapper_code, "        let vtable: &'static %sVTable = &<D as %sVTableProvider>::VTABLE;\n", classname, classname);
+      Printf(f_wrapper_code, "        // Box the director object\n");
+      Printf(f_wrapper_code, "        let director_ptr = Box::into_raw(Box::new(director)) as *mut c_void;\n");
+      Printf(f_wrapper_code, "        // Pass both vtable and director pointer to C++\n");
+      Printf(f_wrapper_code, "        Self {\n");
+      Printf(f_wrapper_code, "            ptr: unsafe { ffi::%s_new_director_vtable(vtable as *const %sVTable as *mut c_void, director_ptr) },\n", dirclassname, classname);
+      Printf(f_wrapper_code, "        }\n");
+      Printf(f_wrapper_code, "    }\n");
+      Printf(f_wrapper_code, "}\n\n");
+      
+    } else if (use_thin) {
+      // Thin mode: use Box<dyn Trait> pattern
+      // Note: We don't use VTable because static VTable with generics is not allowed in Rust
+      
+      // Generate Director struct - holds the trait object
+      Printf(f_wrapper_code, "/// Director struct for %s\n", classname);
+      Printf(f_wrapper_code, "pub struct Director%s {\n", classname);
+      Printf(f_wrapper_code, "    inner: Box<dyn %sDirector>,\n", classname);
+      Printf(f_wrapper_code, "}\n\n");
+      
+      // Generate create_director helper function
+      Printf(f_wrapper_code, "/// Create a Director struct from a %sDirector implementation\n", classname);
+      Printf(f_wrapper_code, "pub fn create_director_%s<D: %sDirector + 'static>(d: D) -> Director%s {\n", classname, classname, classname);
+      Printf(f_wrapper_code, "    Director%s {\n", classname);
+      Printf(f_wrapper_code, "        inner: Box::new(d),\n");
+      Printf(f_wrapper_code, "    }\n");
+      Printf(f_wrapper_code, "}\n\n");
+      
+      // Generate new_with_trait using create_director
+      Printf(f_wrapper_code, "impl %s {\n", classname);
+      Printf(f_wrapper_code, "    /// Create a new %s with a Rust Director implementation\n", classname);
+      Printf(f_wrapper_code, "    pub fn new_with_trait<D: %sDirector + 'static>(director: D) -> Self {\n", classname);
+      Printf(f_wrapper_code, "        let d = create_director_%s(director);\n", classname);
+      Printf(f_wrapper_code, "        let director_ptr = Box::into_raw(Box::new(d)) as *mut c_void;\n");
+      Printf(f_wrapper_code, "        Self {\n");
+      Printf(f_wrapper_code, "            ptr: unsafe { ffi::%s_new_director(director_ptr) },\n", dirclassname);
+      Printf(f_wrapper_code, "        }\n");
+      Printf(f_wrapper_code, "    }\n");
+      Printf(f_wrapper_code, "}\n\n");
+      
+    } else {
+      // Boxed mode: Box<Box<dyn Trait>> pattern
+      // Generate new_with_trait constructor in Rust
+      // Uses Box<Box<dyn Trait>> pattern: outer Box gives us a single thin pointer
+      // that can be safely passed to C++, while inner Box holds the fat pointer (trait object)
+      Printf(f_wrapper_code, "impl %s {\n", classname);
+      Printf(f_wrapper_code, "    /// Create a new %s with a Rust Director implementation\n", classname);
+      Printf(f_wrapper_code, "    /// \n");
+      Printf(f_wrapper_code, "    /// # Arguments\n");
+      Printf(f_wrapper_code, "    /// * `director` - A Rust implementation of %sDirector\n", classname);
+      Printf(f_wrapper_code, "    /// \n");
+      Printf(f_wrapper_code, "    /// # Safety\n");
+      Printf(f_wrapper_code, "    /// The returned %s holds a C++ object that calls back into Rust.\n", classname);
+      Printf(f_wrapper_code, "    /// The director must remain valid for the lifetime of the %s.\n", classname);
+      Printf(f_wrapper_code, "    pub fn new_with_trait<D: %sDirector + 'static>(director: D) -> Self {\n", classname);
+      Printf(f_wrapper_code, "        // Box the trait object as Box<dyn %sDirector> (fat pointer)\n", classname);
+      Printf(f_wrapper_code, "        let trait_obj: Box<dyn %sDirector> = Box::new(director);\n", classname);
+      Printf(f_wrapper_code, "        // Box again to get a thin pointer we can pass to C++\n");
+      Printf(f_wrapper_code, "        let director_ptr = Box::into_raw(Box::new(trait_obj)) as *mut c_void;\n");
+      Printf(f_wrapper_code, "        Self {\n");
+      Printf(f_wrapper_code, "            ptr: unsafe { ffi::%s_new_director(director_ptr) },\n", dirclassname);
+      Printf(f_wrapper_code, "        }\n");
+      Printf(f_wrapper_code, "    }\n");
+      Printf(f_wrapper_code, "}\n\n");
+    }
 
     // Close C++ director class
-    Printf(f_directors_h, "private:\n");
+    // Note: swig_rust_director_ needs to be public for the new_director function to access it
+    Printf(f_directors_h, "public:\n");
+    
+    // For VTable mode, save field names before outputting (needed for new_director_vtable)
+    String *vtable_field_names = NULL;
+    if (use_vtable && director_vtable_fields_cpp && Len(director_vtable_fields_cpp) > 0) {
+      // Parse field names and save them
+      vtable_field_names = NewString("");
+      char *start = Char(director_vtable_fields_cpp);
+      while (start && *start) {
+        char *paren_star = strstr(start, "(*");
+        if (!paren_star) break;
+        paren_star += 2;
+        char *close_paren = strchr(paren_star, ')');
+        if (!close_paren) break;
+        int name_len = close_paren - paren_star;
+        if (Len(vtable_field_names) > 0) {
+          Printf(vtable_field_names, ",");
+        }
+        Printf(vtable_field_names, "%.*s", name_len, paren_star);
+        start = strchr(close_paren, '\n');
+        if (start) start++;
+      }
+    }
+    
+    if (use_vtable) {
+      // VTable mode: output callback function pointer members
+      if (director_vtable_fields_cpp && Len(director_vtable_fields_cpp) > 0) {
+        Dump(director_vtable_fields_cpp, f_directors_h);
+        Delete(director_vtable_fields_cpp);
+        director_vtable_fields_cpp = NULL;
+      }
+    }
     Printf(f_directors_h, "    void *swig_rust_director_;  // Pointer to Rust trait object\n");
     Printf(f_directors_h, "};\n\n");
 
-    // Generate the director new function
-    Printf(f_directors, "extern \"C\" SWIGEXPORT void *%s_new_director(void *rust_director) {\n", dirclassname);
-    Printf(f_directors, "    %s *director = new %s();\n", dirclassname, dirclassname);
-    Printf(f_directors, "    director->swig_rust_director_ = rust_director;\n");
-    Printf(f_directors, "    return director;\n");
-    Printf(f_directors, "}\n\n");
+    // Output callback function declarations after class definition
+    // (only for non-VTable modes)
+    if (!use_vtable) {
+      if (director_callbacks && Len(director_callbacks) > 0) {
+        Dump(director_callbacks, f_directors_h);
+        Delete(director_callbacks);
+        director_callbacks = NULL;
+      }
 
-    // Generate FFI declaration for director constructor
+      // Output Rust callback function implementations
+      // These are the #[no_mangle] extern "C" functions that C++ will call
+      if (director_rust_callbacks && Len(director_rust_callbacks) > 0) {
+        Dump(director_rust_callbacks, f_wrapper_code);
+        Delete(director_rust_callbacks);
+        director_rust_callbacks = NULL;
+      }
+    } else {
+      // VTable mode: clean up buffers (not used)
+      if (director_callbacks) {
+        Delete(director_callbacks);
+        director_callbacks = NULL;
+      }
+      if (director_rust_callbacks) {
+        Delete(director_rust_callbacks);
+        director_rust_callbacks = NULL;
+      }
+    }
+
+    // Generate the director new function(s)
+    if (use_vtable) {
+      // VTable mode: generate new_director_vtable function
+      // The vtable parameter points to a Rust VTable struct with function pointers
+      // We need to copy each function pointer to the corresponding C++ member
+      Printf(f_directors, "extern \"C\" SWIGEXPORT void *%s_new_director_vtable(void *vtable, void *rust_director) {\n", dirclassname);
+      Printf(f_directors, "    %s *director = new %s();\n", dirclassname, dirclassname);
+      // Cast vtable to function pointer array and copy each entry
+      // The Rust VTable struct is #[repr(C)] so the layout matches C function pointer array
+      Printf(f_directors, "    // Copy function pointers from Rust VTable\n");
+      Printf(f_directors, "    typedef void (*VTableFuncPtr)();\n");
+      Printf(f_directors, "    VTableFuncPtr *entries = reinterpret_cast<VTableFuncPtr *>(vtable);\n");
+      // Copy each function pointer from the VTable using saved field names
+      if (vtable_field_names && Len(vtable_field_names) > 0) {
+        int field_index = 0;
+        String *names_copy = Copy(vtable_field_names);
+        char *token = strtok(Char(names_copy), ",");
+        while (token) {
+          Printf(f_directors, "    director->%s = reinterpret_cast<decltype(director->%s)>(entries[%d]);\n", token, token, field_index);
+          field_index++;
+          token = strtok(NULL, ",");
+        }
+        Delete(names_copy);
+      }
+      Printf(f_directors, "    director->swig_rust_director_ = rust_director;\n");
+      Printf(f_directors, "    return director;\n");
+      Printf(f_directors, "}\n\n");
+      if (vtable_field_names) {
+        Delete(vtable_field_names);
+        vtable_field_names = NULL;
+      }
+    } else {
+      // Non-VTable modes: generate new_director function
+      Printf(f_directors, "extern \"C\" SWIGEXPORT void *%s_new_director(void *rust_director) {\n", dirclassname);
+      Printf(f_directors, "    %s *director = new %s();\n", dirclassname, dirclassname);
+      Printf(f_directors, "    director->swig_rust_director_ = rust_director;\n");
+      Printf(f_directors, "    return director;\n");
+      Printf(f_directors, "}\n\n");
+    }
+
+    // Note: Destructor is generated by classDirectorDestructor, not here
+
+    // Generate FFI declaration for director constructor and drop
     Printf(f_ffi_code, "    extern \"C\" {\n");
-    Printf(f_ffi_code, "        pub fn %s_new_director(rust_director: *mut c_void) -> *mut c_void;\n", dirclassname);
+    if (use_vtable) {
+      Printf(f_ffi_code, "        pub fn %s_new_director_vtable(vtable: *mut c_void, rust_director: *mut c_void) -> *mut c_void;\n", dirclassname);
+    } else {
+      Printf(f_ffi_code, "        pub fn %s_new_director(rust_director: *mut c_void) -> *mut c_void;\n", dirclassname);
+    }
+    Printf(f_ffi_code, "        pub fn %s_drop_director(rust_director: *mut c_void);\n", dirclassname);
     Printf(f_ffi_code, "    }\n\n");
+
+    // Generate Rust drop function implementation
+    if (use_vtable) {
+      // VTable mode: drop the director object (Box<D>)
+      Printf(f_wrapper_code, "// Drop function for %s director (called from C++ destructor)\n", classname);
+      Printf(f_wrapper_code, "#[no_mangle]\n");
+      Printf(f_wrapper_code, "pub unsafe extern \"C\" fn %s_drop_director(director: *mut c_void) {\n", dirclassname);
+      Printf(f_wrapper_code, "    // Reconstruct the Box<D> and let it drop\n");
+      Printf(f_wrapper_code, "    // Note: We don't know the concrete type D here, but we only need to free the memory\n");
+      Printf(f_wrapper_code, "    // The actual Drop impl will be called when the Box is dropped\n");
+      Printf(f_wrapper_code, "    // We use a helper to drop as Box<dyn Director> to invoke proper cleanup\n");
+      Printf(f_wrapper_code, "    let _ = Box::from_raw(director as *mut ());\n");
+      Printf(f_wrapper_code, "}\n\n");
+    } else if (use_thin) {
+      // Thin vtable mode: drop Director struct
+      Printf(f_wrapper_code, "// Drop function for %s director (called from C++ destructor)\n", classname);
+      Printf(f_wrapper_code, "#[no_mangle]\n");
+      Printf(f_wrapper_code, "pub unsafe extern \"C\" fn %s_drop_director(director: *mut c_void) {\n", dirclassname);
+      Printf(f_wrapper_code, "    // Reconstruct the Box<Director%s> and let it drop\n", classname);
+      Printf(f_wrapper_code, "    let _ = Box::from_raw(director as *mut Director%s);\n", classname);
+      Printf(f_wrapper_code, "}\n\n");
+    } else {
+      // Boxed mode: drop Box<Box<dyn Trait>>
+      Printf(f_wrapper_code, "// Drop function for %s director (called from C++ destructor)\n", classname);
+      Printf(f_wrapper_code, "#[no_mangle]\n");
+      Printf(f_wrapper_code, "pub unsafe extern \"C\" fn %s_drop_director(director: *mut c_void) {\n", dirclassname);
+      Printf(f_wrapper_code, "    // Reconstruct the Box<Box<dyn %sDirector>> and let it drop\n", classname);
+      Printf(f_wrapper_code, "    // This frees both the outer Box and the inner Box (trait object)\n");
+      Printf(f_wrapper_code, "    let _ = Box::from_raw(director as *mut Box<dyn %sDirector>);\n", classname);
+      Printf(f_wrapper_code, "}\n\n");
+    }
 
     Delete(dirclassname);
     return Language::classDirectorEnd(n);
@@ -2559,6 +3186,9 @@ private:
     Printf(f_directors, ") : Swig::Director(), %s(", classname);
     
     // Call base class constructor with parameters
+    // Get per-class director mode settings from parent node
+    bool use_vtable = GetFlag(parent, "rust:director:vtable");
+    
     if (l) {
       int first = 1;
       for (Parm *p = l; p; p = nextSibling(p)) {
@@ -2568,11 +3198,37 @@ private:
         first = 0;
       }
     }
+    // Note: no swig_vtable_ member needed - function pointers are stored as individual members
     Printf(f_directors, "), swig_rust_director_(nullptr) {\n");
     Printf(f_directors, "}\n\n");
     
     Delete(dirclassname);
     return Language::classDirectorConstructor(n);
+  }
+
+  /* ----------------------------------------------------------------------------- 
+   * classDirectorDestructor()
+   * 
+   * Generate destructor for director class.
+   * This overrides the base class to add cleanup code for swig_rust_director_.
+   * ----------------------------------------------------------------------------- */
+  int classDirectorDestructor(Node *n) {
+    Node *current_class = getCurrentClass();
+    String *dirclassname = directorClassName(current_class);
+    
+    // Generate destructor declaration in header
+    Printf(f_directors_h, "    virtual ~%s();\n", dirclassname);
+    
+    // Generate destructor implementation
+    Printf(f_directors, "%s::~%s() {\n", dirclassname, dirclassname);
+    Printf(f_directors, "    if (swig_rust_director_) {\n");
+    Printf(f_directors, "        %s_drop_director(swig_rust_director_);\n", dirclassname);
+    Printf(f_directors, "        swig_rust_director_ = nullptr;\n");
+    Printf(f_directors, "    }\n");
+    Printf(f_directors, "}\n\n");
+    
+    Delete(dirclassname);
+    return SWIG_OK;
   }
 
   /* ----------------------------------------------------------------------------- 
@@ -2584,6 +3240,10 @@ private:
    *   - Rust callback FFI declaration
    *   - Rust Director trait method
    * ----------------------------------------------------------------------------- */
+  int classDirectorMethods(Node *n) {
+    return Language::classDirectorMethods(n);
+  }
+
   int classDirectorMethod(Node *n, Node *parent, String *super) {
     String *classname = Getattr(parent, "sym:name");
     String *dirclassname = directorClassName(parent);
@@ -2591,6 +3251,16 @@ private:
     String *symname = Getattr(n, "sym:name");
     SwigType *returntype = Getattr(n, "type");
     ParmList *l = Getattr(n, "parms");
+    
+    // Skip defaultargs shortened versions - only keep the longest version
+    Node *defaultargs = Getattr(n, "defaultargs");
+    if (defaultargs) {
+      return SWIG_OK;
+    }
+    
+    // Get per-class director mode settings (set in classDirectorInit)
+    bool use_vtable = GetFlag(parent, "rust:director:vtable");
+    bool use_thin = GetFlag(parent, "rust:director:thin");
     
     bool is_void = (Cmp(returntype, "void") == 0);
     bool pure_virtual = checkAttribute(n, "storage", "virtual") && checkAttribute(n, "value", "0");
@@ -2619,14 +3289,17 @@ private:
       Printf(f_directors_h, " const");
     }
     
-    if (pure_virtual) {
+    // In VTable mode, even pure virtual functions need implementation
+    // because we need to call through VTable
+    if (pure_virtual && !use_vtable) {
       Printf(f_directors_h, " = 0;\n");
     } else {
       Printf(f_directors_h, " override;\n");
     }
     
-    // Generate C++ method implementation (only for non-pure virtual)
-    if (!pure_virtual) {
+    // Generate C++ method implementation
+    // For non-pure virtual OR for pure virtual in VTable mode
+    if (!pure_virtual || use_vtable) {
       Printf(f_directors, "%s %s::%s(", ret_str, dirclassname, name);
       
       // Add parameters to implementation
@@ -2652,29 +3325,74 @@ private:
       Printf(f_directors, "    if (swig_rust_director_) {\n");
       
       // Call Rust callback
-      String *callback_name = NewStringf("%s_%s_callback", dirclassname, name);
+      // For overloaded virtual functions, add a type suffix to the callback name
+      String *callback_suffix = emitOverloadSuffix(l);
+      String *callback_name = NewStringf("%s_%s%s_callback", dirclassname, name, callback_suffix);
+      // Note: Don't Delete callback_suffix here - it's used later for VTable fields and thunks
       
-      if (!is_void) {
-        Printf(f_directors, "        %s result;\n", ret_str);
-        Printf(f_directors, "        if (%s(swig_rust_director_, &result", callback_name);
-      } else {
-        Printf(f_directors, "        %s(swig_rust_director_", callback_name);
-      }
-      
-      // Add parameters to callback
-      if (l) {
-        for (Parm *p = l; p; p = nextSibling(p)) {
-          String *pn = Getattr(p, "name");
-          Printf(f_directors, ", %s", pn);
+      if (use_vtable) {
+        // VTable mode: call the stored callback function pointer directly
+        // The member variable name must match the field name in director_vtable_fields_cpp
+        String *vtable_field_suffix = emitOverloadSuffix(l);
+        String *callback_ptr_name = NewStringf("%s%s", name, vtable_field_suffix);
+        
+        if (!is_void) {
+          Printf(f_directors, "        if (%s) {\n", callback_ptr_name);
+          Printf(f_directors, "            %s result;\n", ret_str);
+          Printf(f_directors, "            if (%s(swig_rust_director_, &result", callback_ptr_name);
+          if (l) {
+            for (Parm *p = l; p; p = nextSibling(p)) {
+              String *pn = Getattr(p, "name");
+              Printf(f_directors, ", %s", pn);
+            }
+          }
+          Printf(f_directors, ")) {\n");
+          Printf(f_directors, "                return result;\n");
+          Printf(f_directors, "            }\n");
+          Printf(f_directors, "        }\n");
+        } else {
+          // void return type
+          Printf(f_directors, "        if (%s) {\n", callback_ptr_name);
+          Printf(f_directors, "            if (%s(swig_rust_director_", callback_ptr_name);
+          if (l) {
+            for (Parm *p = l; p; p = nextSibling(p)) {
+              String *pn = Getattr(p, "name");
+              Printf(f_directors, ", %s", pn);
+            }
+          }
+          Printf(f_directors, ")) {\n");
+          Printf(f_directors, "                return;\n");
+          Printf(f_directors, "            }\n");
+          Printf(f_directors, "        }\n");
         }
-      }
-      
-      if (!is_void) {
-        Printf(f_directors, ")) {\n");
-        Printf(f_directors, "            return result;\n");
-        Printf(f_directors, "        }\n");
+        Delete(callback_ptr_name);
+        Delete(vtable_field_suffix);
       } else {
-        Printf(f_directors, ");\n");
+        // Non-VTable modes: call the callback function directly
+        if (!is_void) {
+          Printf(f_directors, "        %s result;\n", ret_str);
+          Printf(f_directors, "        if (%s(swig_rust_director_, &result", callback_name);
+        } else {
+          Printf(f_directors, "        if (%s(swig_rust_director_", callback_name);
+        }
+        
+        // Add parameters to callback
+        if (l) {
+          for (Parm *p = l; p; p = nextSibling(p)) {
+            String *pn = Getattr(p, "name");
+            Printf(f_directors, ", %s", pn);
+          }
+        }
+        
+        if (!is_void) {
+          Printf(f_directors, ")) {\n");
+          Printf(f_directors, "            return result;\n");
+          Printf(f_directors, "        }\n");
+        } else {
+          Printf(f_directors, ")) {\n");
+          Printf(f_directors, "            return;\n");
+          Printf(f_directors, "        }\n");
+        }
       }
       Printf(f_directors, "    }\n");
       
@@ -2694,30 +3412,145 @@ private:
       }
       Printf(f_directors, "}\n\n");
       
-      // Generate C callback function declaration
-      Printf(f_directors_h, "\n// Rust callback for %s::%s\n", dirclassname, name);
-      Printf(f_directors_h, "extern \"C\" bool %s(void *director", callback_name);
-      if (!is_void) {
-        Printf(f_directors_h, ", %s *result", ret_str);
-      }
-      if (l) {
-        for (Parm *p = l; p; p = nextSibling(p)) {
-          String *pt = SwigType_str(Getattr(p, "type"), 0);
-          String *pn = Getattr(p, "name");
-          Printf(f_directors_h, ", %s %s", pt, pn);
-          Delete(pt);
+      // Store callback declaration in buffer (will be output after class definition)
+      // Skip in VTable mode - callbacks are generated as thunk functions instead
+      if (!use_vtable) {
+        Printf(director_callbacks, "// Rust callback for %s::%s\n", dirclassname, name);
+        Printf(director_callbacks, "extern \"C\" bool %s(void *director", callback_name);
+        if (!is_void) {
+          Printf(director_callbacks, ", %s *result", ret_str);
         }
-      }
-      Printf(f_directors_h, ");\n\n");
+        if (l) {
+          for (Parm *p = l; p; p = nextSibling(p)) {
+            String *pt = SwigType_str(Getattr(p, "type"), 0);
+            String *pn = Getattr(p, "name");
+            Printf(director_callbacks, ", %s %s", pt, pn);
+            Delete(pt);
+          }
+        }
+        Printf(director_callbacks, ");\n\n");
+        
+        // Generate the #[no_mangle] callback function that C++ will call
+        if (use_thin) {
+          // Thin vtable mode: generate callback function for Director struct
+          Printf(director_rust_callbacks, "// C callback for %s::%s%s (called from C++)\n", classname, name, callback_suffix);
+          Printf(director_rust_callbacks, "#[no_mangle]\n");
+          Printf(director_rust_callbacks, "pub unsafe extern \"C\" fn %s(director: *mut c_void", callback_name);
+          if (!is_void) {
+            String *rust_ret = getRustUserType(returntype);
+            Printf(director_rust_callbacks, ", result: *mut %s", rust_ret);
+            Delete(rust_ret);
+          }
+          if (l) {
+            for (Parm *p = l; p; p = nextSibling(p)) {
+              String *pn = Getattr(p, "name");
+              SwigType *pt = Getattr(p, "type");
+              String *rust_type = getRustUserType(pt);
+              Printf(director_rust_callbacks, ", %s: %s", pn, rust_type);
+              Delete(rust_type);
+            }
+          }
+          Printf(director_rust_callbacks, ") -> bool {\n");
+          Printf(director_rust_callbacks, "    // Get the Director struct from the director pointer\n");
+          Printf(director_rust_callbacks, "    let d = &mut *(director as *mut Director%s);\n", classname);
+          Printf(director_rust_callbacks, "    // Call the trait method\n");
+          if (!is_void) {
+            Printf(director_rust_callbacks, "    match d.inner.%s%s(", name, callback_suffix);
+          } else {
+            Printf(director_rust_callbacks, "    d.inner.%s%s(", name, callback_suffix);
+          }
+          if (l) {
+            int first = 1;
+            for (Parm *p = l; p; p = nextSibling(p)) {
+              if (!first) Printf(director_rust_callbacks, ", ");
+              String *pn = Getattr(p, "name");
+              Printf(director_rust_callbacks, "%s", pn);
+              first = 0;
+            }
+          }
+          if (!is_void) {
+            Printf(director_rust_callbacks, ") {\n");
+            Printf(director_rust_callbacks, "        Some(v) => { *result = v; true }\n");
+            Printf(director_rust_callbacks, "        None => false,\n");
+            Printf(director_rust_callbacks, "    }\n");
+          } else {
+            Printf(director_rust_callbacks, ");\n");
+            Printf(director_rust_callbacks, "    true\n");
+          }
+          Printf(director_rust_callbacks, "}\n\n");
+        } else {
+          // Boxed mode: generate standalone callback function
+          // This is the function that C++ will call to invoke the Rust trait method
+          Printf(director_rust_callbacks, "// Callback for %s::%s (called from C++)\n", classname, name);
+          Printf(director_rust_callbacks, "#[no_mangle]\n");
+          Printf(director_rust_callbacks, "pub unsafe extern \"C\" fn %s(director: *mut c_void", callback_name);
+          if (!is_void) {
+            String *rust_ret = getRustUserType(returntype);
+            Printf(director_rust_callbacks, ", result: *mut %s", rust_ret);
+            Delete(rust_ret);
+          }
+          if (l) {
+            for (Parm *p = l; p; p = nextSibling(p)) {
+              String *pn = Getattr(p, "name");
+              SwigType *pt = Getattr(p, "type");
+              String *rust_type = getRustUserType(pt);
+              Printf(director_rust_callbacks, ", %s: %s", pn, rust_type);
+              Delete(rust_type);
+            }
+          }
+          Printf(director_rust_callbacks, ") -> bool {\n");
+          Printf(director_rust_callbacks, "    // Safety: director pointer was created by new_with_trait\n");
+          Printf(director_rust_callbacks, "    // and points to Box<Box<dyn %sDirector>> (outer Box gives thin pointer)\n", classname);
+          Printf(director_rust_callbacks, "    let outer_box = director as *mut Box<dyn %sDirector>;\n", classname);
+          Printf(director_rust_callbacks, "    let director_ref: &dyn %sDirector = &**outer_box;\n", classname);
+          
+          // Call the trait method
+          if (!is_void) {
+            Printf(director_rust_callbacks, "    match (*director_ref).%s%s(", name, callback_suffix);
+          } else {
+            Printf(director_rust_callbacks, "    (*director_ref).%s%s(", name, callback_suffix);
+          }
+          
+          // Add arguments to the call
+          if (l) {
+            int first = 1;
+            for (Parm *p = l; p; p = nextSibling(p)) {
+              if (!first) Printf(director_rust_callbacks, ", ");
+              String *pn = Getattr(p, "name");
+              Printf(director_rust_callbacks, "%s", pn);
+              first = 0;
+            }
+          }
+          
+          if (!is_void) {
+            Printf(director_rust_callbacks, ") {\n");
+            Printf(director_rust_callbacks, "        Some(value) => {\n");
+            Printf(director_rust_callbacks, "            *result = value;\n");
+            Printf(director_rust_callbacks, "            true\n");
+            Printf(director_rust_callbacks, "        }\n");
+            Printf(director_rust_callbacks, "        None => false,\n");
+            Printf(director_rust_callbacks, "    }\n");
+          } else {
+            Printf(director_rust_callbacks, ");\n");
+            Printf(director_rust_callbacks, "    true  // void methods always succeed\n");
+          }
+          
+          Printf(director_rust_callbacks, "}\n\n");
+        }  // end else (boxed mode)
+      }  // end if (!use_vtable)
       
       Delete(callback_name);
+      Delete(callback_suffix);
     }
     
     // Generate Rust Director trait method
     // Determine self type based on const-ness
     String *self_type = SwigType_isconst(Getattr(n, "decl")) ? NewString("&self") : NewString("&self");
     
-    Printf(f_wrapper_code, "    fn %s(%s", name, self_type);
+    // For overloaded virtual methods, add type suffix to the trait method name
+    String *trait_method_suffix = emitOverloadSuffix(l);
+    Printf(f_wrapper_code, "    fn %s%s(%s", name, trait_method_suffix, self_type);
+    Delete(trait_method_suffix);
     
     // Add parameters
     if (l) {
@@ -2738,6 +3571,99 @@ private:
     }
     
     Printf(f_wrapper_code, ";\n");
+    
+    // Generate VTable support for associated const vtable mode
+    if (use_vtable) {
+      // Generate VTable field (function pointer type)
+      // The signature: fn(*const c_void, args...) -> ret_type
+      // For void: fn(*const c_void, args...) -> bool
+      // For non-void: fn(*const c_void, *mut ret_type, args...) -> bool
+      String *vtable_field_suffix = emitOverloadSuffix(l);
+      String *vtable_field_name = NewStringf("%s%s", name, vtable_field_suffix);
+      
+      // Rust field definition
+      Printf(director_vtable_fields, "    pub %s: unsafe extern \"C\" fn(*const c_void", vtable_field_name);
+      if (!is_void) {
+        String *rust_ret = getRustUserType(returntype);
+        Printf(director_vtable_fields, ", *mut %s", rust_ret);
+        Delete(rust_ret);
+      }
+      if (l) {
+        for (Parm *p = l; p; p = nextSibling(p)) {
+          SwigType *pt = Getattr(p, "type");
+          String *rust_type = getRustUserType(pt);
+          Printf(director_vtable_fields, ", %s", rust_type);
+          Delete(rust_type);
+        }
+      }
+      Printf(director_vtable_fields, ") -> bool,\n");
+      
+      // C++ field definition
+      Printf(director_vtable_fields_cpp, "    bool (*%s)(void*", vtable_field_name);
+      if (!is_void) {
+        Printf(director_vtable_fields_cpp, ", %s*", ret_str);
+      }
+      if (l) {
+        for (Parm *p = l; p; p = nextSibling(p)) {
+          String *pt = SwigType_str(Getattr(p, "type"), 0);
+          Printf(director_vtable_fields_cpp, ", %s", pt);
+          Delete(pt);
+        }
+      }
+      Printf(director_vtable_fields_cpp, ");\n");
+      
+      // VTable initializer (references the thunk function)
+      Printf(director_vtable_inits, "        %s: %s_thunk_%s::<Self>,\n", vtable_field_name, classname, vtable_field_name);
+      
+      // Generate thunk function for this method
+      // The thunk casts the void* to the concrete type and calls the trait method
+      Printf(director_vtable_thunks, "/// Thunk function for %s::%s (VTable entry)\n", classname, vtable_field_name);
+      Printf(director_vtable_thunks, "/// Casts the data pointer to type D and calls the trait method\n");
+      Printf(director_vtable_thunks, "pub unsafe extern \"C\" fn %s_thunk_%s<D: %sDirector>(data: *const c_void", classname, vtable_field_name, classname);
+      if (!is_void) {
+        String *rust_ret = getRustUserType(returntype);
+        Printf(director_vtable_thunks, ", result: *mut %s", rust_ret);
+        Delete(rust_ret);
+      }
+      if (l) {
+        for (Parm *p = l; p; p = nextSibling(p)) {
+          String *pn = Getattr(p, "name");
+          SwigType *pt = Getattr(p, "type");
+          String *rust_type = getRustUserType(pt);
+          Printf(director_vtable_thunks, ", %s: %s", pn, rust_type);
+          Delete(rust_type);
+        }
+      }
+      Printf(director_vtable_thunks, ") -> bool {\n");
+      Printf(director_vtable_thunks, "    let obj = &*(data as *const D);\n");
+      if (!is_void) {
+        Printf(director_vtable_thunks, "    match obj.%s(", vtable_field_name);
+      } else {
+        Printf(director_vtable_thunks, "    obj.%s(", vtable_field_name);
+      }
+      if (l) {
+        int first = 1;
+        for (Parm *p = l; p; p = nextSibling(p)) {
+          if (!first) Printf(director_vtable_thunks, ", ");
+          String *pn = Getattr(p, "name");
+          Printf(director_vtable_thunks, "%s", pn);
+          first = 0;
+        }
+      }
+      if (!is_void) {
+        Printf(director_vtable_thunks, ") {\n");
+        Printf(director_vtable_thunks, "        Some(v) => { *result = v; true }\n");
+        Printf(director_vtable_thunks, "        None => false,\n");
+        Printf(director_vtable_thunks, "    }\n");
+      } else {
+        Printf(director_vtable_thunks, ");\n");
+        Printf(director_vtable_thunks, "    true\n");
+      }
+      Printf(director_vtable_thunks, "}\n\n");
+      
+      Delete(vtable_field_name);
+      Delete(vtable_field_suffix);
+    }
     
     Delete(ret_str);
     Delete(self_type);
@@ -2775,6 +3701,8 @@ private:
   bool static_flag;                 // Flag for static member functions
   bool variable_wrapper_flag;       // Flag for variable wrapper
   bool trait_overload_flag;         // Flag for trait-based overload resolution
+  bool director_thin_flag;          // Flag for thin vtable director (vs Box<Box<dyn Trait>>)
+  bool director_vtable_flag;        // Flag for associated const vtable director (zero overhead)
 
   String *class_name;
   Node *class_node;
@@ -2797,9 +3725,18 @@ private:
   int n_directors;                  // Number of director classes
   int first_class_dmethod;          // First method index for current class
   int curr_class_dmethod;           // Current method index
+  String *director_callbacks;       // Buffer for director callback declarations
+  String *director_rust_callbacks;  // Buffer for Rust callback function implementations
+  String *director_vtable_fields;   // Buffer for VTable fields (thin vtable mode)
+  String *director_vtable_inits;    // Buffer for VTable initializers (thin vtable mode)
+  String *director_vtable_thunks;   // Buffer for VTable thunk functions (associated const vtable mode)
+  String *director_vtable_fields_cpp; // Buffer for C++ VTable fields (associated const vtable mode)
 
   Hash *swig_types_hash;
   List *filenames_list;
+  
+  // Member variable accessor naming support
+  Hash *class_method_names;         // Set of method names in current class (for collision detection)
 };
 
 /* -----------------------------------------------------------------------------

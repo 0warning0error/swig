@@ -12,7 +12,11 @@ mod ffi {
     use std::os::raw::*;
 
     extern "C" {
-        pub fn Rust_base_value__SWIG_0() -> c_int;
+        pub fn Rust_Base_base_value_set__SWIG_0(jarg1: *mut c_void, jarg2: c_int);
+    }
+
+    extern "C" {
+        pub fn Rust_Base_base_value_get__SWIG_0(jarg1: *mut c_void) -> c_int;
     }
 
     extern "C" {
@@ -36,7 +40,11 @@ mod ffi {
     }
 
     extern "C" {
-        pub fn Rust_derived_value__SWIG_0() -> c_int;
+        pub fn Rust_Derived_derived_value_set__SWIG_0(jarg1: *mut c_void, jarg2: c_int);
+    }
+
+    extern "C" {
+        pub fn Rust_Derived_derived_value_get__SWIG_0(jarg1: *mut c_void) -> c_int;
     }
 
     extern "C" {
@@ -73,6 +81,8 @@ mod ffi {
 
 }
 
+use std::os::raw::*;
+
 // Safe wrapper functions
 
 /// Rust wrapper for C++ class Base
@@ -89,6 +99,18 @@ pub trait BaseTrait {
 }
 
 impl Base {
+    pub fn set_base_value(&self, base_value: i32) {
+        unsafe { ffi::Rust_Base_base_value_set__SWIG_0(self.ptr, base_value) }
+    }
+}
+
+impl Base {
+    pub fn base_value(&self) -> i32 {
+        unsafe { ffi::Rust_Base_base_value_get__SWIG_0(self.ptr) }
+    }
+}
+
+impl Base {
     pub fn new() -> Self {
         Self {
             ptr: unsafe { ffi::Rust_new_Base__SWIG_0() },
@@ -97,9 +119,9 @@ impl Base {
 }
 
 impl Base {
-    pub fn new_int() -> Self {
+    pub fn new_int(v: i32) -> Self {
         Self {
-            ptr: unsafe { ffi::Rust_new_Base__SWIG_1() },
+            ptr: unsafe { ffi::Rust_new_Base__SWIG_1(v) },
         }
     }
 }
@@ -145,6 +167,18 @@ pub trait DerivedTrait: BaseTrait {
 }
 
 impl Derived {
+    pub fn set_derived_value(&self, derived_value: i32) {
+        unsafe { ffi::Rust_Derived_derived_value_set__SWIG_0(self.ptr, derived_value) }
+    }
+}
+
+impl Derived {
+    pub fn derived_value(&self) -> i32 {
+        unsafe { ffi::Rust_Derived_derived_value_get__SWIG_0(self.ptr) }
+    }
+}
+
+impl Derived {
     pub fn new() -> Self {
         Self {
             ptr: unsafe { ffi::Rust_new_Derived__SWIG_0() },
@@ -153,9 +187,9 @@ impl Derived {
 }
 
 impl Derived {
-    pub fn new_int_int() -> Self {
+    pub fn new_int_int(base_v: i32, derived_v: i32) -> Self {
         Self {
-            ptr: unsafe { ffi::Rust_new_Derived__SWIG_1() },
+            ptr: unsafe { ffi::Rust_new_Derived__SWIG_1(base_v, derived_v) },
         }
     }
 }

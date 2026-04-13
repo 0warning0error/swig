@@ -12,15 +12,27 @@ mod ffi {
     use std::os::raw::*;
 
     extern "C" {
-        pub fn Rust_global_int__SWIG_0() -> c_int;
+        pub fn Rust_global_int_set__SWIG_0(jarg1: c_int);
     }
 
     extern "C" {
-        pub fn Rust_global_double__SWIG_0() -> c_double;
+        pub fn Rust_global_int_get__SWIG_0() -> c_int;
     }
 
     extern "C" {
-        pub fn Rust_global_str__SWIG_0() -> *const c_char;
+        pub fn Rust_global_double_set__SWIG_0(jarg1: c_double);
+    }
+
+    extern "C" {
+        pub fn Rust_global_double_get__SWIG_0() -> c_double;
+    }
+
+    extern "C" {
+        pub fn Rust_global_str_set__SWIG_0(jarg1: *const c_char);
+    }
+
+    extern "C" {
+        pub fn Rust_global_str_get__SWIG_0() -> *const c_char;
     }
 
     extern "C" {
@@ -32,15 +44,27 @@ mod ffi {
     }
 
     extern "C" {
-        pub fn Rust_static_int__SWIG_0() -> c_int;
+        pub fn Rust_StaticClass_static_int_set__SWIG_0(jarg1: c_int);
     }
 
     extern "C" {
-        pub fn Rust_static_double__SWIG_0() -> c_double;
+        pub fn Rust_StaticClass_static_int_get__SWIG_0() -> c_int;
     }
 
     extern "C" {
-        pub fn Rust_instance_int__SWIG_0() -> c_int;
+        pub fn Rust_StaticClass_static_double_set__SWIG_0(jarg1: c_double);
+    }
+
+    extern "C" {
+        pub fn Rust_StaticClass_static_double_get__SWIG_0() -> c_double;
+    }
+
+    extern "C" {
+        pub fn Rust_StaticClass_instance_int_set__SWIG_0(jarg1: *mut c_void, jarg2: c_int);
+    }
+
+    extern "C" {
+        pub fn Rust_StaticClass_instance_int_get__SWIG_0(jarg1: *mut c_void) -> c_int;
     }
 
     extern "C" {
@@ -89,18 +113,28 @@ mod ffi {
 
 }
 
+use std::os::raw::*;
+
 // Safe wrapper functions
 
-pub fn global_int() -> i32 {
-    unsafe { ffi::Rust_global_int__SWIG_0() }
+pub fn global_int_set_int(global_int: i32) {
+    unsafe { ffi::Rust_global_int_set__SWIG_0(global_int) }
 }
 
-pub fn global_double() -> f64 {
-    unsafe { ffi::Rust_global_double__SWIG_0() }
+pub fn global_int_get() -> i32 {
+    unsafe { ffi::Rust_global_int_get__SWIG_0() }
 }
 
-pub fn global_str() -> &str {
-    unsafe { ffi::Rust_global_str__SWIG_0() }
+pub fn global_double_set_f64(global_double: f64) {
+    unsafe { ffi::Rust_global_double_set__SWIG_0(global_double) }
+}
+
+pub fn global_double_get() -> f64 {
+    unsafe { ffi::Rust_global_double_get__SWIG_0() }
+}
+
+pub fn global_str_get() -> &str {
+    unsafe { ffi::Rust_global_str_get__SWIG_0() }
 }
 
 pub fn get_global_int() -> i32 {
@@ -123,8 +157,44 @@ pub trait StaticClassTrait {
     fn get_static_int(&mut self) -> i32;
     fn set_static_int(&mut self, v: i32);
     fn add_static(&mut self, v: i32) -> i32;
-    fn get_instance(&self) -> i32;
+    fn get_instance(&mut self) -> i32;
     fn set_instance(&mut self, v: i32);
+}
+
+impl StaticClass {
+    pub fn StaticClass_static_int_set_int(StaticClass::static_int: i32) {
+        unsafe { ffi::Rust_StaticClass_static_int_set__SWIG_0(StaticClass::static_int) }
+    }
+}
+
+impl StaticClass {
+    pub fn StaticClass_static_int_get() -> i32 {
+        unsafe { ffi::Rust_StaticClass_static_int_get__SWIG_0() }
+    }
+}
+
+impl StaticClass {
+    pub fn StaticClass_static_double_set_f64(StaticClass::static_double: f64) {
+        unsafe { ffi::Rust_StaticClass_static_double_set__SWIG_0(StaticClass::static_double) }
+    }
+}
+
+impl StaticClass {
+    pub fn StaticClass_static_double_get() -> f64 {
+        unsafe { ffi::Rust_StaticClass_static_double_get__SWIG_0() }
+    }
+}
+
+impl StaticClass {
+    pub fn set_instance_int(&self, instance_int: i32) {
+        unsafe { ffi::Rust_StaticClass_instance_int_set__SWIG_0(self.ptr, instance_int) }
+    }
+}
+
+impl StaticClass {
+    pub fn instance_int(&self) -> i32 {
+        unsafe { ffi::Rust_StaticClass_instance_int_get__SWIG_0(self.ptr) }
+    }
 }
 
 impl StaticClass {
@@ -136,9 +206,9 @@ impl StaticClass {
 }
 
 impl StaticClass {
-    pub fn new_int() -> Self {
+    pub fn new_int(v: i32) -> Self {
         Self {
-            ptr: unsafe { ffi::Rust_new_StaticClass__SWIG_1() },
+            ptr: unsafe { ffi::Rust_new_StaticClass__SWIG_1(v) },
         }
     }
 }

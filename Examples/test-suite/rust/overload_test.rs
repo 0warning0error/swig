@@ -61,6 +61,8 @@ mod ffi {
 
 }
 
+use std::os::raw::*;
+
 // Safe wrapper functions
 
 /// Rust wrapper for C++ class OverloadClass
@@ -76,7 +78,7 @@ pub trait OverloadClassTrait {
     fn process_f64(&mut self, x: f64) -> i32;
     fn process_int_int(&mut self, x: i32, y: i32) -> i32;
     fn get(&mut self) -> i32;
-    fn get(&self) -> i32;
+    fn get(&mut self) -> i32;
 }
 
 impl OverloadClass {
@@ -88,17 +90,17 @@ impl OverloadClass {
 }
 
 impl OverloadClass {
-    pub fn new_int() -> Self {
+    pub fn new_int(v: i32) -> Self {
         Self {
-            ptr: unsafe { ffi::Rust_new_OverloadClass__SWIG_1() },
+            ptr: unsafe { ffi::Rust_new_OverloadClass__SWIG_1(v) },
         }
     }
 }
 
 impl OverloadClass {
-    pub fn new_f64() -> Self {
+    pub fn new_f64(v: f64) -> Self {
         Self {
-            ptr: unsafe { ffi::Rust_new_OverloadClass__SWIG_2() },
+            ptr: unsafe { ffi::Rust_new_OverloadClass__SWIG_2(v) },
         }
     }
 }

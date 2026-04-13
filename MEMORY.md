@@ -80,11 +80,24 @@
 
 ---
 
-## 当前状态 (2026-04-11 最新)
+## 当前状态 (2026-04-12 最新)
 
 ### ✅ 本次会话修复的问题
 
-#### 1. 枚举类型处理修复
+#### 1. 枚举类型生成修复 (2026-04-12)
+- **问题**: 枚举定义没有正确生成到 Rust 代码中
+  - 全局枚举 `Color` 和类内枚举 `EnumClass::Status` 未生成
+  - 生成了错误的常量如 `pub const RED: i32 = RED;`
+- **原因**: 
+  - SWIG 枚举值子节点的 nodeType 是 `"enumitem"` 而不是 `"enumvalue"`
+  - 调用 `Language::enumDeclaration(n)` 会触发 `constantWrapper` 生成错误常量
+- **修复**:
+  - 修改 `enumDeclaration()` 使用正确的节点类型 `"enumitem"`
+  - 不调用 `Language::enumDeclaration(n)`，直接处理枚举值
+  - 类内枚举生成独立名称（如 `EnumClass_Status`）
+  - 修改 `cleanTypeName()` 处理 C++ 作用域分隔符 `::`
+
+#### 2. 枚举类型处理修复 (之前会话)
 - **问题**: 枚举类型生成的代码存在问题：
   - 空枚举被生成（没有值）
   - 匿名枚举名称无效（如 `$unnamed2$`）
@@ -247,4 +260,63 @@ $env:SWIG_LIB="D:\code\cpp\swig\Lib"
 ---
 
 ## 最后更新
-2026-04-11 (完善测试用例：16个测试全部通过)
+2026-04-12 (修复枚举类型生成问题)
+
+### Phase 14: 枚举类型处理修复 ✅
+
+**问题**: 枚举定义没有正确生成到 Rust 代码中
+- 全局枚举 `Color` 和类内枚举 `EnumClass::Status` 未生成
+- 生成了错误的常量如 `pub const RED: i32 = RED;`
+
+**原因**: 
+- SWIG 枚举值子节点的 nodeType 是 `"enumitem"` 而不是 `"enumvalue"`
+- 调用 `Language::enumDeclaration(n)` 会触发 `constantWrapper` 生成错误常量
+
+**修复**:
+- [x] 修改 `enumDeclaration()` 使用正确的节点类型 `"enumitem"`
+- [x] 不调用 `Language::enumDeclaration(n)`，避免触发错误的 `constantWrapper`
+- [x] 为类内枚举生成独立名称（如 `EnumClass_Status`）
+- [x] 修改 `cleanTypeName()` 处理 C++ 作用域分隔符 `::`
+- [x] 所有 16 个测试用例通过
+
+---
+
+## 2026-04-12 本次会话修复的问题
+
+### 1. rust.cxx 语法错误修复 ✅
+- **问题**: 第 3144 行 `Printf` 语句和 `if` 条件分支被错误连接在同一行
+- **修复**: 重新组织代码，添加正确的 `if (director_thin_flag)` 和 `else` 分支
+
+### 2. emitRustTrait 参数处理修复 ✅
+- **问题**: 错误地跳过第一个指针/引用类型参数（认为是 self 参数）
+- **原因**: 类成员函数的 `params` 列表不包含 self 指针
+- **修复**: 移除跳过第一个参数的逻辑
+
+### 3. emitRustTrait const 方法检测修复 ✅
+- **问题**: const 方法检测逻辑与 emitRustImpl 不一致
+- **修复**: 使用与 emitRustImpl 一致的检测方式（`SwigType_isconst` 和 `Strstr(decl, "r.q(const)")`）
+
+### 4. emitRustConstructor 参数处理修复 ✅
+- **问题**: 重载构造函数没有传递参数给 FFI
+- **修复**: 使用更可靠的参数遍历方式，使用 `getRustUserType` 作为 typemap fallback
+
+### 5. 构造函数命名修复 ✅
+- **问题**: 重载构造函数名称如 `new_CallbackBase` 而不是 `new_CallbackBase`
+- **修复**: 正确生成类型后缀
+
+### 6. use std::os::raw::* 导入 ✅
+- **状态**: 已正确生成在 FFI 模块和包装代码中
+
+### 后续优化项
+
+#### 关联常量 VTable 方案 ✅ (2026-04-13 完成)
+- 新增 `-director-vtable` 命令行选项
+- 使用 Rust 关联常量为每个实现类型提供静态 VTable
+- 通过 blanket impl 自动为所有 `Director + Sized` 类型实现 `VTableProvider`
+- 生成泛型 thunk 函数作为 VTable 中的函数指针
+- 零开销抽象，比 `Box<dyn Trait>` 更高效
+- 需要 Rust 1.20+
+
+#### 默认参数 Builder 模式
+- 为 C++ 默认参数生成 Rust Builder 模式
+- 详见 RUST_DESIGN.md 第11章

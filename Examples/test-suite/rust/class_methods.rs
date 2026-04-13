@@ -12,7 +12,11 @@ mod ffi {
     use std::os::raw::*;
 
     extern "C" {
-        pub fn Rust_value__SWIG_0() -> c_int;
+        pub fn Rust_MethodTest_value_set__SWIG_0(jarg1: *mut c_void, jarg2: c_int);
+    }
+
+    extern "C" {
+        pub fn Rust_MethodTest_value_get__SWIG_0(jarg1: *mut c_void) -> c_int;
     }
 
     extern "C" {
@@ -73,6 +77,8 @@ mod ffi {
 
 }
 
+use std::os::raw::*;
+
 // Safe wrapper functions
 
 /// Rust wrapper for C++ class MethodTest
@@ -86,12 +92,24 @@ pub struct MethodTest {
 pub trait MethodTestTrait {
     fn void_method(&mut self);
     fn set_value(&mut self, v: i32);
-    fn get_value(&self) -> i32;
-    fn add(&self, a: i32, b: i32) -> i32;
+    fn get_value(&mut self) -> i32;
+    fn add(&mut self, a: i32, b: i32) -> i32;
     fn static_add(&mut self, a: i32, b: i32) -> i32;
-    fn const_method(&self) -> i32;
+    fn const_method(&mut self) -> i32;
     fn with_default_int_int(&mut self, a: i32, b: i32) -> i32;
     fn with_default_int(&mut self, a: i32) -> i32;
+}
+
+impl MethodTest {
+    pub fn value_set(&self, value: i32) {
+        unsafe { ffi::Rust_MethodTest_value_set__SWIG_0(self.ptr, value) }
+    }
+}
+
+impl MethodTest {
+    pub fn value(&self) -> i32 {
+        unsafe { ffi::Rust_MethodTest_value_get__SWIG_0(self.ptr) }
+    }
 }
 
 impl MethodTest {
@@ -103,9 +121,9 @@ impl MethodTest {
 }
 
 impl MethodTest {
-    pub fn new_int() -> Self {
+    pub fn new_int(v: i32) -> Self {
         Self {
-            ptr: unsafe { ffi::Rust_new_MethodTest__SWIG_1() },
+            ptr: unsafe { ffi::Rust_new_MethodTest__SWIG_1(v) },
         }
     }
 }

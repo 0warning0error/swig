@@ -12,7 +12,11 @@ mod ffi {
     use std::os::raw::*;
 
     extern "C" {
-        pub fn Rust_value__SWIG_0() -> c_int;
+        pub fn Rust_IntContainer_value_set__SWIG_0(jarg1: *mut c_void, jarg2: c_int);
+    }
+
+    extern "C" {
+        pub fn Rust_IntContainer_value_get__SWIG_0(jarg1: *mut c_void) -> c_int;
     }
 
     extern "C" {
@@ -40,7 +44,11 @@ mod ffi {
     }
 
     extern "C" {
-        pub fn Rust_value__SWIG_0() -> c_double;
+        pub fn Rust_DoubleContainer_value_set__SWIG_0(jarg1: *mut c_void, jarg2: c_double);
+    }
+
+    extern "C" {
+        pub fn Rust_DoubleContainer_value_get__SWIG_0(jarg1: *mut c_void) -> c_double;
     }
 
     extern "C" {
@@ -77,6 +85,8 @@ mod ffi {
 
 }
 
+use std::os::raw::*;
+
 // Safe wrapper functions
 
 /// Rust wrapper for C++ class IntContainer
@@ -88,9 +98,21 @@ pub struct IntContainer {
 
 /// Trait defining the interface for C++ class IntContainer
 pub trait IntContainerTrait {
-    fn get(&self) -> i32;
+    fn get(&mut self) -> i32;
     fn set(&mut self, v: i32);
     fn add(&mut self, other: i32) -> i32;
+}
+
+impl IntContainer {
+    pub fn set_value(&self, value: i32) {
+        unsafe { ffi::Rust_IntContainer_value_set__SWIG_0(self.ptr, value) }
+    }
+}
+
+impl IntContainer {
+    pub fn value(&self) -> i32 {
+        unsafe { ffi::Rust_IntContainer_value_get__SWIG_0(self.ptr) }
+    }
 }
 
 impl IntContainer {
@@ -102,9 +124,9 @@ impl IntContainer {
 }
 
 impl IntContainer {
-    pub fn new_int() -> Self {
+    pub fn new_int(v: i32) -> Self {
         Self {
-            ptr: unsafe { ffi::Rust_new_IntContainer__SWIG_1() },
+            ptr: unsafe { ffi::Rust_new_IntContainer__SWIG_1(v) },
         }
     }
 }
@@ -148,9 +170,21 @@ pub struct DoubleContainer {
 
 /// Trait defining the interface for C++ class DoubleContainer
 pub trait DoubleContainerTrait {
-    fn get(&self) -> f64;
+    fn get(&mut self) -> f64;
     fn set(&mut self, v: f64);
     fn add(&mut self, other: f64) -> f64;
+}
+
+impl DoubleContainer {
+    pub fn set_value(&self, value: f64) {
+        unsafe { ffi::Rust_DoubleContainer_value_set__SWIG_0(self.ptr, value) }
+    }
+}
+
+impl DoubleContainer {
+    pub fn value(&self) -> f64 {
+        unsafe { ffi::Rust_DoubleContainer_value_get__SWIG_0(self.ptr) }
+    }
 }
 
 impl DoubleContainer {
@@ -162,9 +196,9 @@ impl DoubleContainer {
 }
 
 impl DoubleContainer {
-    pub fn new_f64() -> Self {
+    pub fn new_f64(v: f64) -> Self {
         Self {
-            ptr: unsafe { ffi::Rust_new_DoubleContainer__SWIG_1() },
+            ptr: unsafe { ffi::Rust_new_DoubleContainer__SWIG_1(v) },
         }
     }
 }

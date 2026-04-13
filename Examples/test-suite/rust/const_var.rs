@@ -12,35 +12,51 @@ mod ffi {
     use std::os::raw::*;
 
     extern "C" {
-        pub fn Rust_INT_CONST__SWIG_0() -> c_int;
+        pub fn Rust_INT_CONST_get__SWIG_0() -> c_int;
     }
 
     extern "C" {
-        pub fn Rust_DOUBLE_CONST__SWIG_0() -> c_double;
+        pub fn Rust_DOUBLE_CONST_get__SWIG_0() -> c_double;
     }
 
     extern "C" {
-        pub fn Rust_STR_CONST__SWIG_0() -> *const c_char;
+        pub fn Rust_STR_CONST_set__SWIG_0(jarg1: *const c_char);
     }
 
     extern "C" {
-        pub fn Rust_global_int__SWIG_0() -> c_int;
+        pub fn Rust_STR_CONST_get__SWIG_0() -> *const c_char;
     }
 
     extern "C" {
-        pub fn Rust_global_double__SWIG_0() -> c_double;
+        pub fn Rust_global_int_set__SWIG_0(jarg1: c_int);
     }
 
     extern "C" {
-        pub fn Rust_CLASS_CONST__SWIG_0() -> c_int;
+        pub fn Rust_global_int_get__SWIG_0() -> c_int;
     }
 
     extern "C" {
-        pub fn Rust_static_var__SWIG_0() -> c_int;
+        pub fn Rust_global_double_set__SWIG_0(jarg1: c_double);
     }
 
     extern "C" {
-        pub fn Rust_instance_var__SWIG_0() -> c_int;
+        pub fn Rust_global_double_get__SWIG_0() -> c_double;
+    }
+
+    extern "C" {
+        pub fn Rust_ConstClass_static_var_set__SWIG_0(jarg1: c_int);
+    }
+
+    extern "C" {
+        pub fn Rust_ConstClass_static_var_get__SWIG_0() -> c_int;
+    }
+
+    extern "C" {
+        pub fn Rust_ConstClass_instance_var_set__SWIG_0(jarg1: *mut c_void, jarg2: c_int);
+    }
+
+    extern "C" {
+        pub fn Rust_ConstClass_instance_var_get__SWIG_0(jarg1: *mut c_void) -> c_int;
     }
 
     extern "C" {
@@ -61,26 +77,36 @@ mod ffi {
 
 }
 
+use std::os::raw::*;
+
 // Safe wrapper functions
 
-pub fn INT_CONST() -> i32 {
-    unsafe { ffi::Rust_INT_CONST__SWIG_0() }
+pub fn INT_CONST_get() -> i32 {
+    unsafe { ffi::Rust_INT_CONST_get__SWIG_0() }
 }
 
-pub fn DOUBLE_CONST() -> f64 {
-    unsafe { ffi::Rust_DOUBLE_CONST__SWIG_0() }
+pub fn DOUBLE_CONST_get() -> f64 {
+    unsafe { ffi::Rust_DOUBLE_CONST_get__SWIG_0() }
 }
 
-pub fn STR_CONST() -> &str {
-    unsafe { ffi::Rust_STR_CONST__SWIG_0() }
+pub fn STR_CONST_get() -> &str {
+    unsafe { ffi::Rust_STR_CONST_get__SWIG_0() }
 }
 
-pub fn global_int() -> i32 {
-    unsafe { ffi::Rust_global_int__SWIG_0() }
+pub fn global_int_set_int(global_int: i32) {
+    unsafe { ffi::Rust_global_int_set__SWIG_0(global_int) }
 }
 
-pub fn global_double() -> f64 {
-    unsafe { ffi::Rust_global_double__SWIG_0() }
+pub fn global_int_get() -> i32 {
+    unsafe { ffi::Rust_global_int_get__SWIG_0() }
+}
+
+pub fn global_double_set_f64(global_double: f64) {
+    unsafe { ffi::Rust_global_double_set__SWIG_0(global_double) }
+}
+
+pub fn global_double_get() -> f64 {
+    unsafe { ffi::Rust_global_double_get__SWIG_0() }
 }
 
 /// Rust wrapper for C++ class ConstClass
@@ -92,14 +118,39 @@ pub struct ConstClass {
 
 /// Trait defining the interface for C++ class ConstClass
 pub trait ConstClassTrait {
-    fn get_value(&self) -> i32;
+    fn get_value(&mut self) -> i32;
     fn set_value(&mut self, v: i32);
 }
 
+pub const ConstClass_CLASS_CONST: i32 = ConstClass::CLASS_CONST;
 impl ConstClass {
-    pub fn new_int() -> Self {
+    pub fn ConstClass_static_var_set_int(ConstClass::static_var: i32) {
+        unsafe { ffi::Rust_ConstClass_static_var_set__SWIG_0(ConstClass::static_var) }
+    }
+}
+
+impl ConstClass {
+    pub fn ConstClass_static_var_get() -> i32 {
+        unsafe { ffi::Rust_ConstClass_static_var_get__SWIG_0() }
+    }
+}
+
+impl ConstClass {
+    pub fn set_instance_var(&self, instance_var: i32) {
+        unsafe { ffi::Rust_ConstClass_instance_var_set__SWIG_0(self.ptr, instance_var) }
+    }
+}
+
+impl ConstClass {
+    pub fn instance_var(&self) -> i32 {
+        unsafe { ffi::Rust_ConstClass_instance_var_get__SWIG_0(self.ptr) }
+    }
+}
+
+impl ConstClass {
+    pub fn new_int(v: i32) -> Self {
         Self {
-            ptr: unsafe { ffi::Rust_new_ConstClass__SWIG_0() },
+            ptr: unsafe { ffi::Rust_new_ConstClass__SWIG_0(v) },
         }
     }
 }

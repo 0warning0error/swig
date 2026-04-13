@@ -85,6 +85,8 @@ mod ffi {
 
 }
 
+use std::os::raw::*;
+
 // Safe wrapper functions
 
 pub fn maxint_int_int(a: i32, b: i32) -> i32 {
@@ -106,13 +108,13 @@ pub struct vecint {
 pub trait vecintTrait {
     fn get(&mut self, index: i32) -> i32;
     fn set(&mut self, index: i32, val: *mut c_void);
-    fn testconst(&self, x: i32);
+    fn testconst(&mut self, x: i32);
 }
 
 impl vecint {
-    pub fn new_int() -> Self {
+    pub fn new_int(_sz: i32) -> Self {
         Self {
-            ptr: unsafe { ffi::Rust_new_vecint__SWIG_0() },
+            ptr: unsafe { ffi::Rust_new_vecint__SWIG_0(_sz) },
         }
     }
 }
@@ -158,13 +160,13 @@ pub struct vecdouble {
 pub trait vecdoubleTrait {
     fn get(&mut self, index: i32) -> f64;
     fn set(&mut self, index: i32, val: *mut c_void);
-    fn testconst(&self, x: f64);
+    fn testconst(&mut self, x: f64);
 }
 
 impl vecdouble {
-    pub fn new_int() -> Self {
+    pub fn new_int(_sz: i32) -> Self {
         Self {
-            ptr: unsafe { ffi::Rust_new_vecdouble__SWIG_0() },
+            ptr: unsafe { ffi::Rust_new_vecdouble__SWIG_0(_sz) },
         }
     }
 }
@@ -208,15 +210,15 @@ pub struct vecintp {
 
 /// Trait defining the interface for C++ class vecintp
 pub trait vecintpTrait {
-    fn get(&mut self, index: i32) -> &[int [10]; 10];
+    fn get(&mut self, index: i32) -> int;
     fn set(&mut self, index: i32, val: *mut c_void);
-    fn testconst(&self);
+    fn testconst(&mut self, x: *mut c_void);
 }
 
 impl vecintp {
-    pub fn new_int() -> Self {
+    pub fn new_int(_sz: i32) -> Self {
         Self {
-            ptr: unsafe { ffi::Rust_new_vecintp__SWIG_0() },
+            ptr: unsafe { ffi::Rust_new_vecintp__SWIG_0(_sz) },
         }
     }
 }
@@ -240,7 +242,7 @@ impl vecintp {
 }
 
 impl vecintpTrait for vecintp {
-    fn get(&mut self, index: i32) -> &[int [10]; 10] {
+    fn get(&mut self, index: i32) -> int {
         unsafe { ffi::Rust_vecintp_get__SWIG_0(self.ptr, index) }
     }
     fn set(&mut self, index: i32, val: *mut c_void) {

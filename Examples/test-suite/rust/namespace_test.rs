@@ -12,7 +12,11 @@ mod ffi {
     use std::os::raw::*;
 
     extern "C" {
-        pub fn Rust_outer_var__SWIG_0() -> c_int;
+        pub fn Rust_outer_var_set__SWIG_0(jarg1: c_int);
+    }
+
+    extern "C" {
+        pub fn Rust_outer_var_get__SWIG_0() -> c_int;
     }
 
     extern "C" {
@@ -20,7 +24,11 @@ mod ffi {
     }
 
     extern "C" {
-        pub fn Rust_value__SWIG_0() -> c_int;
+        pub fn Rust_OuterClass_value_set__SWIG_0(jarg1: *mut c_void, jarg2: c_int);
+    }
+
+    extern "C" {
+        pub fn Rust_OuterClass_value_get__SWIG_0(jarg1: *mut c_void) -> c_int;
     }
 
     extern "C" {
@@ -36,7 +44,11 @@ mod ffi {
     }
 
     extern "C" {
-        pub fn Rust_inner_var__SWIG_0() -> c_int;
+        pub fn Rust_inner_var_set__SWIG_0(jarg1: c_int);
+    }
+
+    extern "C" {
+        pub fn Rust_inner_var_get__SWIG_0() -> c_int;
     }
 
     extern "C" {
@@ -44,7 +56,11 @@ mod ffi {
     }
 
     extern "C" {
-        pub fn Rust_value__SWIG_0() -> c_int;
+        pub fn Rust_InnerClass_value_set__SWIG_0(jarg1: *mut c_void, jarg2: c_int);
+    }
+
+    extern "C" {
+        pub fn Rust_InnerClass_value_get__SWIG_0(jarg1: *mut c_void) -> c_int;
     }
 
     extern "C" {
@@ -61,10 +77,16 @@ mod ffi {
 
 }
 
+use std::os::raw::*;
+
 // Safe wrapper functions
 
-pub fn outer_var() -> i32 {
-    unsafe { ffi::Rust_outer_var__SWIG_0() }
+pub fn outer_var_set_int(Outer::outer_var: i32) {
+    unsafe { ffi::Rust_outer_var_set__SWIG_0(Outer::outer_var) }
+}
+
+pub fn outer_var_get() -> i32 {
+    unsafe { ffi::Rust_outer_var_get__SWIG_0() }
 }
 
 pub fn outer_func() -> i32 {
@@ -81,6 +103,18 @@ pub struct OuterClass {
 /// Trait defining the interface for C++ class OuterClass
 pub trait OuterClassTrait {
     fn method(&mut self) -> i32;
+}
+
+impl OuterClass {
+    pub fn set_value(&self, value: i32) {
+        unsafe { ffi::Rust_OuterClass_value_set__SWIG_0(self.ptr, value) }
+    }
+}
+
+impl OuterClass {
+    pub fn value(&self) -> i32 {
+        unsafe { ffi::Rust_OuterClass_value_get__SWIG_0(self.ptr) }
+    }
 }
 
 impl OuterClass {
@@ -115,8 +149,12 @@ impl OuterClassTrait for OuterClass {
     }
 }
 
-pub fn inner_var() -> i32 {
-    unsafe { ffi::Rust_inner_var__SWIG_0() }
+pub fn inner_var_set_int(Outer::Inner::inner_var: i32) {
+    unsafe { ffi::Rust_inner_var_set__SWIG_0(Outer::Inner::inner_var) }
+}
+
+pub fn inner_var_get() -> i32 {
+    unsafe { ffi::Rust_inner_var_get__SWIG_0() }
 }
 
 pub fn inner_func() -> i32 {
@@ -133,6 +171,18 @@ pub struct InnerClass {
 /// Trait defining the interface for C++ class InnerClass
 pub trait InnerClassTrait {
     fn method(&mut self) -> i32;
+}
+
+impl InnerClass {
+    pub fn set_value(&self, value: i32) {
+        unsafe { ffi::Rust_InnerClass_value_set__SWIG_0(self.ptr, value) }
+    }
+}
+
+impl InnerClass {
+    pub fn value(&self) -> i32 {
+        unsafe { ffi::Rust_InnerClass_value_get__SWIG_0(self.ptr) }
+    }
 }
 
 impl InnerClass {

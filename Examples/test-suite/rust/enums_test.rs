@@ -37,7 +37,25 @@ mod ffi {
 
 }
 
+use std::os::raw::*;
+
 // Safe wrapper functions
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Color {
+    RED,
+    GREEN,
+    BLUE,
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Size {
+    SMALL = 1,
+    MEDIUM = 5,
+    LARGE = 10,
+}
 
 /// Rust wrapper for C++ class EnumClass
 /// Holds a pointer to the underlying C++ object.
@@ -48,8 +66,16 @@ pub struct EnumClass {
 
 /// Trait defining the interface for C++ class EnumClass
 pub trait EnumClassTrait {
-    fn get_status(&self) -> SWIGENUM;
+    fn get_status(&mut self) -> EnumClass_Status;
     fn set_status(&mut self, s: i32);
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum EnumClass_Status {
+    OK,
+    ERROR,
+    PENDING,
 }
 
 impl EnumClass {
@@ -79,7 +105,7 @@ impl EnumClass {
 }
 
 impl EnumClassTrait for EnumClass {
-    fn get_status(&mut self) -> SWIGENUM {
+    fn get_status(&mut self) -> EnumClass_Status {
         unsafe { ffi::Rust_EnumClass_get_status__SWIG_0(self.ptr) }
     }
     fn set_status(&mut self, s: i32) {

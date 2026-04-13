@@ -12,7 +12,11 @@ mod ffi {
     use std::os::raw::*;
 
     extern "C" {
-        pub fn Rust_value__SWIG_0() -> c_int;
+        pub fn Rust_ValueClass_value_set__SWIG_0(jarg1: *mut c_void, jarg2: c_int);
+    }
+
+    extern "C" {
+        pub fn Rust_ValueClass_value_get__SWIG_0(jarg1: *mut c_void) -> c_int;
     }
 
     extern "C" {
@@ -60,7 +64,11 @@ mod ffi {
     }
 
     extern "C" {
-        pub fn Rust_ptr__SWIG_0() -> *mut c_void;
+        pub fn Rust_PointerHolder_ptr_set__SWIG_0(jarg1: *mut c_void, jarg2: *mut c_void);
+    }
+
+    extern "C" {
+        pub fn Rust_PointerHolder_ptr_get__SWIG_0(jarg1: *mut c_void) -> *mut c_void;
     }
 
     extern "C" {
@@ -89,6 +97,8 @@ mod ffi {
 
 }
 
+use std::os::raw::*;
+
 // Safe wrapper functions
 
 /// Rust wrapper for C++ class ValueClass
@@ -100,14 +110,26 @@ pub struct ValueClass {
 
 /// Trait defining the interface for C++ class ValueClass
 pub trait ValueClassTrait {
-    fn get(&self) -> i32;
+    fn get(&mut self) -> i32;
     fn set(&mut self, v: i32);
 }
 
 impl ValueClass {
-    pub fn new_int() -> Self {
+    pub fn set_value(&self, value: i32) {
+        unsafe { ffi::Rust_ValueClass_value_set__SWIG_0(self.ptr, value) }
+    }
+}
+
+impl ValueClass {
+    pub fn value(&self) -> i32 {
+        unsafe { ffi::Rust_ValueClass_value_get__SWIG_0(self.ptr) }
+    }
+}
+
+impl ValueClass {
+    pub fn new_int(v: i32) -> Self {
         Self {
-            ptr: unsafe { ffi::Rust_new_ValueClass__SWIG_0() },
+            ptr: unsafe { ffi::Rust_new_ValueClass__SWIG_0(v) },
         }
     }
 }
@@ -160,9 +182,21 @@ pub struct PointerHolder {
 
 /// Trait defining the interface for C++ class PointerHolder
 pub trait PointerHolderTrait {
-    fn set_ptr(&mut self);
-    fn get_ptr(&self) -> ValueClass *;
-    fn get_value(&self) -> i32;
+    fn set_ptr(&mut self, p: *mut c_void);
+    fn get_ptr(&mut self) -> ValueClass;
+    fn get_value(&mut self) -> i32;
+}
+
+impl PointerHolder {
+    pub fn ptr_set(&self, ptr: *mut c_void) {
+        unsafe { ffi::Rust_PointerHolder_ptr_set__SWIG_0(self.ptr, ptr) }
+    }
+}
+
+impl PointerHolder {
+    pub fn ptr(&self) -> *mut c_void {
+        unsafe { ffi::Rust_PointerHolder_ptr_get__SWIG_0(self.ptr) }
+    }
 }
 
 impl PointerHolder {
@@ -174,9 +208,9 @@ impl PointerHolder {
 }
 
 impl PointerHolder {
-    pub fn new_ValueClass() -> Self {
+    pub fn new_ValueClass(p: *mut c_void) -> Self {
         Self {
-            ptr: unsafe { ffi::Rust_new_PointerHolder__SWIG_1() },
+            ptr: unsafe { ffi::Rust_new_PointerHolder__SWIG_1(p) },
         }
     }
 }
@@ -203,8 +237,8 @@ impl PointerHolderTrait for PointerHolder {
     fn set_ptr(&mut self, p: *mut c_void) {
         unsafe { ffi::Rust_PointerHolder_set_ptr__SWIG_0(self.ptr, p) }
     }
-    fn get_ptr(&mut self) -> ValueClass * {
-        unsafe { ffi::Rust_PointerHolder_get_ptr__SWIG_0(self.ptr) }
+    fn get_ptr(&mut self) -> ValueClass {
+        ValueClass { ptr: unsafe { ffi::Rust_PointerHolder_get_ptr__SWIG_0(self.ptr) } }
     }
     fn get_value(&mut self) -> i32 {
         unsafe { ffi::Rust_PointerHolder_get_value__SWIG_0(self.ptr) }

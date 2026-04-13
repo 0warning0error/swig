@@ -37,6 +37,8 @@ mod ffi {
 
 }
 
+use std::os::raw::*;
+
 // Safe wrapper functions
 
 pub fn Foo() -> &str {
@@ -52,7 +54,7 @@ pub struct CBase {
 
 /// Trait defining the interface for C++ class CBase
 pub trait CBaseTrait {
-    fn Foo(&mut self) -> c_char;
+    fn Foo(&self) -> c_char;
 }
 
 impl CBase {

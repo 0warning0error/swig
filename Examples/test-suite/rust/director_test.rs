@@ -13,6 +13,7 @@ mod ffi {
 
     extern "C" {
         pub fn SwigDirector_CallbackBase_new_director(rust_director: *mut c_void) -> *mut c_void;
+        pub fn SwigDirector_CallbackBase_drop_director(rust_director: *mut c_void);
     }
 
     extern "C" {
@@ -44,7 +45,11 @@ mod ffi {
     }
 
     extern "C" {
-        pub fn Rust_callback__SWIG_0() -> *mut c_void;
+        pub fn Rust_CallbackUser_callback_set__SWIG_0(jarg1: *mut c_void, jarg2: *mut c_void);
+    }
+
+    extern "C" {
+        pub fn Rust_CallbackUser_callback_get__SWIG_0(jarg1: *mut c_void) -> *mut c_void;
     }
 
     extern "C" {
@@ -77,6 +82,8 @@ mod ffi {
 
 }
 
+use std::os::raw::*;
+
 // Safe wrapper functions
 
 /// Trait for Rust implementations of CallbackBase that can be used as Director callbacks
@@ -89,26 +96,60 @@ mod ffi {
 /// - Use `Cell<T>` for simple mutable state (Copy types)
 /// - Use `RefCell<T>` for complex state (panics on re-entrancy)
 pub trait CallbackBaseDirector {
-    fn on_event(&self, event_id: i32);
-    fn process(&self, value: i32) -> Option<i32>;
+    fn on_event_int(&self, event_id: i32);
+    fn process_int(&self, value: i32) -> Option<i32>;
+}
+
+/// Director struct for CallbackBase
+pub struct DirectorCallbackBase {
+    inner: Box<dyn CallbackBaseDirector>,
+}
+
+/// Create a Director struct from a CallbackBaseDirector implementation
+pub fn create_director_CallbackBase<D: CallbackBaseDirector + 'static>(d: D) -> DirectorCallbackBase {
+    DirectorCallbackBase {
+        inner: Box::new(d),
+    }
 }
 
 impl CallbackBase {
     /// Create a new CallbackBase with a Rust Director implementation
-    /// 
-    /// # Arguments
-    /// * `director` - A Rust implementation of CallbackBaseDirector
-    /// 
-    /// # Safety
-    /// The returned CallbackBase holds a C++ object that calls back into Rust.
-    /// The director must remain valid for the lifetime of the CallbackBase.
     pub fn new_with_trait<D: CallbackBaseDirector + 'static>(director: D) -> Self {
-        let director_box = Box::new(director);
-        let director_ptr = Box::into_raw(director_box) as *mut c_void;
+        let d = create_director_CallbackBase(director);
+        let director_ptr = Box::into_raw(Box::new(d)) as *mut c_void;
         Self {
             ptr: unsafe { ffi::SwigDirector_CallbackBase_new_director(director_ptr) },
         }
     }
+}
+
+// C callback for CallbackBase::on_event_int (called from C++)
+#[no_mangle]
+pub unsafe extern "C" fn SwigDirector_CallbackBase_on_event_int_callback(director: *mut c_void, event_id: i32) -> bool {
+    // Get the Director struct from the director pointer
+    let d = &mut *(director as *mut DirectorCallbackBase);
+    // Call the trait method
+    d.inner.on_event_int(event_id);
+    true
+}
+
+// C callback for CallbackBase::process_int (called from C++)
+#[no_mangle]
+pub unsafe extern "C" fn SwigDirector_CallbackBase_process_int_callback(director: *mut c_void, result: *mut i32, value: i32) -> bool {
+    // Get the Director struct from the director pointer
+    let d = &mut *(director as *mut DirectorCallbackBase);
+    // Call the trait method
+    match d.inner.process_int(value) {
+        Some(v) => { *result = v; true }
+        None => false,
+    }
+}
+
+// Drop function for CallbackBase director (called from C++ destructor)
+#[no_mangle]
+pub unsafe extern "C" fn SwigDirector_CallbackBase_drop_director(director: *mut c_void) {
+    // Reconstruct the Box<DirectorCallbackBase> and let it drop
+    let _ = Box::from_raw(director as *mut DirectorCallbackBase);
 }
 
 /// Rust wrapper for C++ class CallbackBase
@@ -176,10 +217,22 @@ pub struct CallbackUser {
 
 /// Trait defining the interface for C++ class CallbackUser
 pub trait CallbackUserTrait {
-    fn set_callback(&mut self);
-    fn get_callback(&self) -> CallbackBase *;
+    fn set_callback(&mut self, cb: *mut c_void);
+    fn get_callback(&mut self) -> CallbackBase;
     fn notify(&mut self, event_id: i32);
     fn process_value(&mut self, v: i32) -> i32;
+}
+
+impl CallbackUser {
+    pub fn callback_set(&self, callback: *mut c_void) {
+        unsafe { ffi::Rust_CallbackUser_callback_set__SWIG_0(self.ptr, callback) }
+    }
+}
+
+impl CallbackUser {
+    pub fn callback(&self) -> *mut c_void {
+        unsafe { ffi::Rust_CallbackUser_callback_get__SWIG_0(self.ptr) }
+    }
 }
 
 impl CallbackUser {
@@ -191,9 +244,9 @@ impl CallbackUser {
 }
 
 impl CallbackUser {
-    pub fn new_CallbackBase() -> Self {
+    pub fn new_CallbackBase(cb: *mut c_void) -> Self {
         Self {
-            ptr: unsafe { ffi::Rust_new_CallbackUser__SWIG_1() },
+            ptr: unsafe { ffi::Rust_new_CallbackUser__SWIG_1(cb) },
         }
     }
 }
@@ -220,8 +273,8 @@ impl CallbackUserTrait for CallbackUser {
     fn set_callback(&mut self, cb: *mut c_void) {
         unsafe { ffi::Rust_CallbackUser_set_callback__SWIG_0(self.ptr, cb) }
     }
-    fn get_callback(&mut self) -> CallbackBase * {
-        unsafe { ffi::Rust_CallbackUser_get_callback__SWIG_0(self.ptr) }
+    fn get_callback(&mut self) -> CallbackBase {
+        CallbackBase { ptr: unsafe { ffi::Rust_CallbackUser_get_callback__SWIG_0(self.ptr) } }
     }
     fn notify(&mut self, event_id: i32) {
         unsafe { ffi::Rust_CallbackUser_notify__SWIG_0(self.ptr, event_id) }

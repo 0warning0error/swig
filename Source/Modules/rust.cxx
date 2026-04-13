@@ -177,6 +177,11 @@ public:
     SWIG_config_file("rust.swg");
 
     allow_overloading();
+    
+    // Automatically rename C++ operators to valid Rust method names
+    // This eliminates "Warning 503: Can't wrap 'operator +' unless renamed"
+    // The rename directives use the same naming convention as getRustOperatorName()
+    Preprocessor_define("SWIGRENAME_OP(Rust) 1", 0);
   }
 
   /* ----------------------------------------------------------------------------- 
@@ -758,6 +763,9 @@ public:
     // Generate impl block
     emitRustImpl(n);
 
+    // Generate Rust standard library trait implementations for operators
+    emitOperatorTraitImpls(n);
+
     // Generate trait-based overload resolution if enabled
     if (trait_overload_flag) {
       Hash *overload_info = buildOverloadInfo(n);
@@ -1300,6 +1308,268 @@ private:
         Printf(file, "}\n");
       }
     }
+  }
+
+  /* ----------------------------------------------------------------------------- 
+   * isOperatorMethod()
+   * 
+   * Check if a method name is a C++ operator overload.
+   * Returns true for names like "operator +", "operator ==", etc.
+   * ----------------------------------------------------------------------------- */
+  bool isOperatorMethod(const String *name) {
+    if (!name) return false;
+    const char *str = Char(name);
+    return (strncmp(str, "operator ", 9) == 0);
+  }
+
+  /* ----------------------------------------------------------------------------- 
+   * getOperatorKind()
+   * 
+   * Get the operator kind from a method name like "operator +".
+   * Returns a string like "+", "-", "==", etc. (without the "operator " prefix).
+   * Returns NULL if not an operator.
+   * ----------------------------------------------------------------------------- */
+  String *getOperatorKind(const String *name) {
+    if (!isOperatorMethod(name)) return NULL;
+    const char *str = Char(name);
+    // Skip "operator " prefix
+    return NewString(str + 9);
+  }
+
+  /* ----------------------------------------------------------------------------- 
+   * getRustOperatorTrait()
+   * 
+   * Get the Rust trait name for a C++ operator.
+   * Maps C++ operators to Rust standard library traits.
+   * 
+   * Mapping:
+   *   operator+  -> std::ops::Add
+   *   operator-  -> std::ops::Sub
+   *   operator*  -> std::ops::Mul
+   *   operator/  -> std::ops::Div
+   *   operator%  -> std::ops::Rem
+   *   operator- (unary) -> std::ops::Neg
+   *   operator!  -> std::ops::Not
+   *   operator== -> std::cmp::PartialEq
+   *   operator!= -> (same as ==, derived)
+   *   operator<  -> std::cmp::PartialOrd
+   *   operator<= -> (same as <, derived)
+   *   operator>  -> (same as <, derived)
+   *   operator>= -> (same as <, derived)
+   *   operator[] -> std::ops::Index / IndexMut
+   *   operator&  -> std::ops::BitAnd
+   *   operator|  -> std::ops::BitOr
+   *   operator^  -> std::ops::BitXor
+   *   operator<< -> std::ops::Shl
+   *   operator>> -> std::ops::Shr
+   * 
+   * Returns NULL if the operator has no Rust trait equivalent.
+   * ----------------------------------------------------------------------------- */
+  String *getRustOperatorTrait(const String *op_kind, bool is_unary = false) {
+    if (!op_kind) return NULL;
+    
+    const char *op = Char(op_kind);
+    
+    // Binary arithmetic operators
+    if (strcmp(op, "+") == 0) return NewString("std::ops::Add");
+    if (strcmp(op, "-") == 0) return is_unary ? NewString("std::ops::Neg") : NewString("std::ops::Sub");
+    if (strcmp(op, "*") == 0) return NewString("std::ops::Mul");
+    if (strcmp(op, "/") == 0) return NewString("std::ops::Div");
+    if (strcmp(op, "%") == 0) return NewString("std::ops::Rem");
+    
+    // Unary operators
+    if (strcmp(op, "!") == 0) return NewString("std::ops::Not");
+    
+    // Comparison operators
+    if (strcmp(op, "==") == 0) return NewString("std::cmp::PartialEq");
+    if (strcmp(op, "!=") == 0) return NewString("std::cmp::PartialEq");  // Derived from ==
+    if (strcmp(op, "<") == 0) return NewString("std::cmp::PartialOrd");
+    if (strcmp(op, "<=") == 0) return NewString("std::cmp::PartialOrd");
+    if (strcmp(op, ">") == 0) return NewString("std::cmp::PartialOrd");
+    if (strcmp(op, ">=") == 0) return NewString("std::cmp::PartialOrd");
+    
+    // Index operator
+    if (strcmp(op, "[]") == 0) return NewString("std::ops::Index");
+    
+    // Bitwise operators
+    if (strcmp(op, "&") == 0) return NewString("std::ops::BitAnd");
+    if (strcmp(op, "|") == 0) return NewString("std::ops::BitOr");
+    if (strcmp(op, "^") == 0) return NewString("std::ops::BitXor");
+    if (strcmp(op, "<<") == 0) return NewString("std::ops::Shl");
+    if (strcmp(op, ">>") == 0) return NewString("std::ops::Shr");
+    
+    // No Rust trait equivalent
+    return NULL;
+  }
+
+  /* ----------------------------------------------------------------------------- 
+   * getRustOperatorMethodName()
+   * 
+   * Get the Rust trait method name for a C++ operator.
+   * Most Rust traits use specific method names like "add", "sub", etc.
+   * ----------------------------------------------------------------------------- */
+  String *getRustOperatorMethodName(const String *op_kind, bool is_unary = false) {
+    if (!op_kind) return NULL;
+    
+    const char *op = Char(op_kind);
+    
+    // Binary arithmetic operators
+    if (strcmp(op, "+") == 0) return NewString("add");
+    if (strcmp(op, "-") == 0) return is_unary ? NewString("neg") : NewString("sub");
+    if (strcmp(op, "*") == 0) return NewString("mul");
+    if (strcmp(op, "/") == 0) return NewString("div");
+    if (strcmp(op, "%") == 0) return NewString("rem");
+    
+    // Unary operators
+    if (strcmp(op, "!") == 0) return NewString("not");
+    
+    // Comparison operators
+    if (strcmp(op, "==") == 0) return NewString("eq");
+    if (strcmp(op, "!=") == 0) return NewString("ne");
+    if (strcmp(op, "<") == 0) return NewString("partial_cmp");  // Returns Option<Ordering>
+    if (strcmp(op, "<=") == 0) return NewString("partial_cmp");
+    if (strcmp(op, ">") == 0) return NewString("partial_cmp");
+    if (strcmp(op, ">=") == 0) return NewString("partial_cmp");
+    
+    // Index operator
+    if (strcmp(op, "[]") == 0) return NewString("index");
+    
+    // Bitwise operators
+    if (strcmp(op, "&") == 0) return NewString("bitand");
+    if (strcmp(op, "|") == 0) return NewString("bitor");
+    if (strcmp(op, "^") == 0) return NewString("bitxor");
+    if (strcmp(op, "<<") == 0) return NewString("shl");
+    if (strcmp(op, ">>") == 0) return NewString("shr");
+    
+    return NULL;
+  }
+
+  /* ----------------------------------------------------------------------------- 
+   * getRustOperatorName()
+   * 
+   * Get a valid Rust method name for a C++ operator.
+   * Used when we need a regular method name (not trait implementation).
+   * Examples: "operator +" -> "op_add", "operator ==" -> "op_eq"
+   * 
+   * For unary vs binary distinction, pass param_count:
+   *   - param_count == 0: unary operator (e.g., -a, !a)
+   *   - param_count >= 1: binary operator (e.g., a + b, a == b)
+   * ----------------------------------------------------------------------------- */
+  String *getRustOperatorName(const String *name, int param_count = -1) {
+    String *op_kind = getOperatorKind(name);
+    if (!op_kind) return NULL;
+    
+    const char *op = Char(op_kind);
+    String *result = NewString("op_");
+    
+    // Check if this might be a unary operator
+    // Unary minus has 0 explicit params (self is implicit)
+    bool is_unary = (param_count == 0);
+    
+    // Map operators to readable names
+    if (strcmp(op, "+") == 0) Append(result, "add");
+    else if (strcmp(op, "-") == 0) {
+      // Distinguish unary minus from binary minus
+      if (is_unary) Append(result, "neg");
+      else Append(result, "sub");
+    }
+    else if (strcmp(op, "*") == 0) {
+      // Distinguish unary dereference from binary multiply
+      if (is_unary) Append(result, "deref");
+      else Append(result, "mul");
+    }
+    else if (strcmp(op, "&") == 0) {
+      // Distinguish unary address-of from binary bitwise and
+      if (is_unary) Append(result, "addr");
+      else Append(result, "bitand");
+    }
+    else if (strcmp(op, "/") == 0) Append(result, "div");
+    else if (strcmp(op, "%") == 0) Append(result, "rem");
+    else if (strcmp(op, "==") == 0) Append(result, "eq");
+    else if (strcmp(op, "!=") == 0) Append(result, "ne");
+    else if (strcmp(op, "<") == 0) Append(result, "lt");
+    else if (strcmp(op, "<=") == 0) Append(result, "le");
+    else if (strcmp(op, ">") == 0) Append(result, "gt");
+    else if (strcmp(op, ">=") == 0) Append(result, "ge");
+    else if (strcmp(op, "[]") == 0) Append(result, "index");
+    else if (strcmp(op, "|") == 0) Append(result, "bitor");
+    else if (strcmp(op, "^") == 0) Append(result, "bitxor");
+    else if (strcmp(op, "<<") == 0) Append(result, "shl");
+    else if (strcmp(op, ">>") == 0) Append(result, "shr");
+    else if (strcmp(op, "!") == 0) Append(result, "not");
+    else if (strcmp(op, "~") == 0) Append(result, "bitnot");
+    else if (strcmp(op, "+=") == 0) Append(result, "add_assign");
+    else if (strcmp(op, "-=") == 0) Append(result, "sub_assign");
+    else if (strcmp(op, "*=") == 0) Append(result, "mul_assign");
+    else if (strcmp(op, "/=") == 0) Append(result, "div_assign");
+    else Append(result, op);  // Fallback: use the operator as-is
+    
+    Delete(op_kind);
+    return result;
+  }
+
+  /* ----------------------------------------------------------------------------- 
+   * getOperatorKindFromRustName()
+   * 
+   * Reverse mapping: given a renamed Rust method name like "op_add", "op_eq",
+   * return the operator kind "+", "==", etc.
+   * This is used to detect operators that have been renamed via %rename_operators.
+   * 
+   * Returns NULL if the name is not a recognized operator method name.
+   * ----------------------------------------------------------------------------- */
+  String *getOperatorKindFromRustName(const String *name) {
+    if (!name) return NULL;
+    
+    const char *str = Char(name);
+    
+    // Must start with "op_"
+    if (strncmp(str, "op_", 3) != 0) return NULL;
+    
+    const char *op_suffix = str + 3;
+    
+    // Map renamed names back to operator kinds
+    if (strcmp(op_suffix, "add") == 0) return NewString("+");
+    if (strcmp(op_suffix, "sub") == 0) return NewString("-");
+    if (strcmp(op_suffix, "neg") == 0) return NewString("-");  // Unary minus
+    if (strcmp(op_suffix, "mul") == 0) return NewString("*");
+    if (strcmp(op_suffix, "deref") == 0) return NewString("*");  // Unary dereference
+    if (strcmp(op_suffix, "div") == 0) return NewString("/");
+    if (strcmp(op_suffix, "rem") == 0) return NewString("%");
+    if (strcmp(op_suffix, "eq") == 0) return NewString("==");
+    if (strcmp(op_suffix, "ne") == 0) return NewString("!=");
+    if (strcmp(op_suffix, "lt") == 0) return NewString("<");
+    if (strcmp(op_suffix, "le") == 0) return NewString("<=");
+    if (strcmp(op_suffix, "gt") == 0) return NewString(">");
+    if (strcmp(op_suffix, "ge") == 0) return NewString(">=");
+    if (strcmp(op_suffix, "index") == 0) return NewString("[]");
+    if (strcmp(op_suffix, "not") == 0) return NewString("!");
+    if (strcmp(op_suffix, "bitand") == 0) return NewString("&");
+    if (strcmp(op_suffix, "bitor") == 0) return NewString("|");
+    if (strcmp(op_suffix, "bitxor") == 0) return NewString("^");
+    if (strcmp(op_suffix, "bitnot") == 0) return NewString("~");
+    if (strcmp(op_suffix, "shl") == 0) return NewString("<<");
+    if (strcmp(op_suffix, "shr") == 0) return NewString(">>");
+    if (strcmp(op_suffix, "add_assign") == 0) return NewString("+=");
+    if (strcmp(op_suffix, "sub_assign") == 0) return NewString("-=");
+    if (strcmp(op_suffix, "mul_assign") == 0) return NewString("*=");
+    if (strcmp(op_suffix, "div_assign") == 0) return NewString("/=");
+    if (strcmp(op_suffix, "call") == 0) return NewString("()");
+    
+    return NULL;
+  }
+
+  /* ----------------------------------------------------------------------------- 
+   * isRenamedOperatorMethod()
+   * 
+   * Check if a method name is a renamed operator method (e.g., "op_add", "op_eq").
+   * ----------------------------------------------------------------------------- */
+  bool isRenamedOperatorMethod(const String *name) {
+    String *op_kind = getOperatorKindFromRustName(name);
+    if (op_kind) {
+      Delete(op_kind);
+      return true;
+    }
+    return false;
   }
 
   /* ----------------------------------------------------------------------------- 
@@ -2009,9 +2279,24 @@ private:
             continue;
           }
           
+          // Check if this is an operator method
+          bool is_operator = isOperatorMethod(mname);
+          String *operator_rust_name = NULL;
+          if (is_operator) {
+            // Count parameters to distinguish unary vs binary operators
+            int param_count = 0;
+            for (Parm *p = params; p; p = nextSibling(p)) {
+              param_count++;
+            }
+            operator_rust_name = getRustOperatorName(mname, param_count);
+          }
+          
           // Generate method name with suffix if overloaded (legacy mode)
           String *final_mname;
-          if (total_count > 1) {
+          if (is_operator && operator_rust_name) {
+            // Use the operator's Rust name (e.g., "op_add", "op_eq")
+            final_mname = Copy(operator_rust_name);
+          } else if (total_count > 1) {
             // Add type-based suffix for overloaded methods
             String *suffix = emitOverloadSuffix(params);
             final_mname = NewStringf("%s%s", mname, suffix);
@@ -2192,9 +2477,24 @@ private:
             continue;
           }
           
+          // Check if this is an operator method
+          bool is_operator = isOperatorMethod(mname);
+          String *operator_rust_name = NULL;
+          if (is_operator) {
+            // Count parameters to distinguish unary vs binary operators
+            int param_count = 0;
+            for (Parm *p = params; p; p = nextSibling(p)) {
+              param_count++;
+            }
+            operator_rust_name = getRustOperatorName(mname, param_count);
+          }
+          
           // Generate method name with suffix if overloaded (legacy mode)
           String *final_mname;
-          if (total_count > 1) {
+          if (is_operator && operator_rust_name) {
+            // Use the operator's Rust name (e.g., "op_add", "op_eq")
+            final_mname = Copy(operator_rust_name);
+          } else if (total_count > 1) {
             String *suffix = emitOverloadSuffix(params);
             final_mname = NewStringf("%s%s", mname, suffix);
             Delete(suffix);
@@ -2741,6 +3041,325 @@ private:
   }
 
   /* ----------------------------------------------------------------------------- 
+   * emitOperatorTraitImpls()
+   * 
+   * Generate Rust standard library trait implementations for C++ operators.
+   * For example:
+   *   C++: Vector2 operator+(const Vector2& rhs) const;
+   *   Rust: impl Add for Vector2 { type Output = Vector2; fn add(self, rhs: Vector2) -> Vector2 { ... } }
+   * 
+   * Supported operators and their Rust trait mappings:
+   *   +  -> Add
+   *   -  -> Sub (binary) / Neg (unary)
+   *   *  -> Mul
+   *   /  -> Div
+   *   %  -> Rem
+   *   == -> PartialEq
+   *   != -> PartialEq (ne method)
+   *   <  -> PartialOrd
+   *   <= -> PartialOrd
+   *   >  -> PartialOrd
+   *   >= -> PartialOrd
+   *   [] -> Index / IndexMut
+   *   &  -> BitAnd
+   *   |  -> BitOr
+   *   ^  -> BitXor
+   *   << -> Shl
+   *   >> -> Shr
+   *   !  -> Not
+   *   += -> AddAssign
+   *   -= -> SubAssign
+   *   *= -> MulAssign
+   *   /= -> DivAssign
+   * ----------------------------------------------------------------------------- */
+  void emitOperatorTraitImpls(Node *n) {
+    String *class_name = Getattr(n, "sym:name");
+    
+    // Collect all operators defined in this class
+    // Map from operator kind to list of method nodes
+    Hash *operators = NewHash();
+    
+    for (Node *child = firstChild(n); child; child = nextSibling(child)) {
+      if (Strcmp(nodeType(child), "cdecl") == 0) {
+        if (GetFlag(child, "ismember") && !GetFlag(child, "static")) {
+          String *decl = Getattr(child, "decl");
+          if (decl && SwigType_isfunction(decl)) {
+            String *mname = Getattr(child, "sym:name");
+            String *op_kind = NULL;
+            
+            // Check if this is an operator method (original name like "operator +")
+            if (mname && isOperatorMethod(mname)) {
+              op_kind = getOperatorKind(mname);
+            }
+            // Also check if this is a renamed operator method (like "op_add", "op_eq")
+            else if (mname && isRenamedOperatorMethod(mname)) {
+              op_kind = getOperatorKindFromRustName(mname);
+            }
+            
+            if (op_kind) {
+              List *op_list = Getattr(operators, op_kind);
+              if (!op_list) {
+                op_list = NewList();
+                Setattr(operators, op_kind, op_list);
+              }
+              Append(op_list, child);
+              Delete(op_kind);
+            }
+          }
+        }
+      }
+    }
+    
+    // Generate trait implementations for each operator
+    for (Iterator it = First(operators); it.key; it = Next(it)) {
+      String *op_kind = it.key;
+      List *op_list = (List *) it.item;
+      
+      // Get the first (and possibly only) overload of this operator
+      Node *op_node = (Node *) Getitem(op_list, 0);
+      if (!op_node) continue;
+      
+      // Get operator info
+      ParmList *params = Getattr(op_node, "parms");
+      SwigType *return_type = Getattr(op_node, "type");
+      String *wname = Getattr(op_node, "wrap:name");
+      String *decl = Getattr(op_node, "decl");
+      
+      // Determine if this is a const method (for self type)
+      bool is_const_method = (decl && Strstr(decl, "q(const)"));
+      
+      // Count parameters to distinguish unary vs binary
+      int param_count = 0;
+      for (Parm *p = params; p; p = nextSibling(p)) {
+        param_count++;
+      }
+      bool is_unary = (param_count == 0);
+      
+      // Get Rust trait name
+      String *trait_name = getRustOperatorTrait(op_kind, is_unary);
+      if (!trait_name) continue;  // No Rust trait for this operator
+      
+      // Get Rust trait method name
+      String *method_name = getRustOperatorMethodName(op_kind, is_unary);
+      if (!method_name) {
+        Delete(trait_name);
+        continue;
+      }
+      
+      // Get return type for Output associated type
+      String *output_type = NULL;
+      if (return_type && SwigType_type(return_type) != T_VOID) {
+        output_type = getRustUserType(return_type);
+      }
+      
+      // Handle different operator types
+      const char *op_str = Char(op_kind);
+      
+      // Binary arithmetic operators (Add, Sub, Mul, Div, Rem, BitAnd, BitOr, BitXor, Shl, Shr)
+      if (strcmp(op_str, "+") == 0 || strcmp(op_str, "-") == 0 || strcmp(op_str, "*") == 0 ||
+          strcmp(op_str, "/") == 0 || strcmp(op_str, "%") == 0 ||
+          strcmp(op_str, "&") == 0 || strcmp(op_str, "|") == 0 || strcmp(op_str, "^") == 0 ||
+          strcmp(op_str, "<<") == 0 || strcmp(op_str, ">>") == 0) {
+        
+        if (!is_unary && output_type) {
+          // Generate impl<Op<Rhs = Self>> for ClassName
+          Printf(f_wrapper_code, "impl %s for %s {\n", trait_name, class_name);
+          Printf(f_wrapper_code, "    type Output = %s;\n", output_type);
+          
+          // Self type based on const-ness
+          String *self_type = is_const_method ? NewString("&self") : NewString("&mut self");
+          
+          // Get Rhs type from first parameter
+          Parm *rhs_param = params;
+          String *rhs_type = NULL;
+          SwigType *ptype = NULL;
+          bool rhs_is_class = false;
+          if (rhs_param) {
+            ptype = Getattr(rhs_param, "type");
+            
+            // For reference/pointer types, get the base type
+            SwigType *base_type = ptype;
+            if (SwigType_isreference(ptype) || SwigType_ispointer(ptype)) {
+              base_type = SwigType_base(ptype);
+              // Check if base is a class type
+              Node *rhs_class = classLookup(base_type);
+              if (rhs_class) {
+                rhs_is_class = true;
+                rhs_type = cleanTypeName(base_type);
+              }
+            }
+            
+            // If not a class reference/pointer, use normal type lookup
+            if (!rhs_type) {
+              rhs_type = getRustUserType(ptype);
+              // Check if rhs is a class type (has .ptr field)
+              Node *rhs_class = classLookup(ptype);
+              if (rhs_class) rhs_is_class = true;
+            }
+            
+            if (base_type != ptype) Delete(base_type);
+          }
+          if (!rhs_type) rhs_type = NewString(class_name);
+          
+          Printf(f_wrapper_code, "    fn %s(%s, rhs: %s) -> Self::Output {\n", method_name, self_type, rhs_type);
+          
+          // Build FFI call - handle class vs primitive types differently
+          if (rhs_is_class) {
+            // Rhs is a class type, pass its .ptr
+            Printf(f_wrapper_code, "        %s { ptr: unsafe { ffi::%s(self.ptr as *const c_void, rhs.ptr as *const c_void) } }\n", 
+                   output_type, wname);
+          } else {
+            // Rhs is a primitive type, pass directly
+            Printf(f_wrapper_code, "        %s { ptr: unsafe { ffi::%s(self.ptr as *const c_void, rhs) } }\n", 
+                   output_type, wname);
+          }
+          Printf(f_wrapper_code, "    }\n");
+          Printf(f_wrapper_code, "}\n\n");
+          
+          Delete(self_type);
+          Delete(rhs_type);
+        }
+      }
+      // Unary operators (Neg, Not)
+      else if (strcmp(op_str, "!") == 0 || (strcmp(op_str, "-") == 0 && is_unary)) {
+        if (output_type) {
+          Printf(f_wrapper_code, "impl %s for %s {\n", trait_name, class_name);
+          Printf(f_wrapper_code, "    type Output = %s;\n", output_type);
+          
+          String *self_type = is_const_method ? NewString("&self") : NewString("&mut self");
+          Printf(f_wrapper_code, "    fn %s(%s) -> Self::Output {\n", method_name, self_type);
+          Printf(f_wrapper_code, "        %s { ptr: unsafe { ffi::%s(self.ptr as *const c_void) } }\n", 
+                 output_type, wname);
+          Printf(f_wrapper_code, "    }\n");
+          Printf(f_wrapper_code, "}\n\n");
+          
+          Delete(self_type);
+        }
+      }
+      // Comparison operators (PartialEq)
+      else if (strcmp(op_str, "==") == 0 || strcmp(op_str, "!=") == 0) {
+        // Only generate PartialEq once (from == operator)
+        if (strcmp(op_str, "==") == 0) {
+          Printf(f_wrapper_code, "impl std::cmp::PartialEq for %s {\n", class_name);
+          
+          String *self_type = is_const_method ? NewString("&self") : NewString("&self");  // Comparison is always const
+          Printf(f_wrapper_code, "    fn eq(%s, other: &Self) -> bool {\n", self_type);
+          Printf(f_wrapper_code, "        unsafe { ffi::%s(self.ptr as *const c_void, other.ptr as *const c_void) }\n", wname);
+          Printf(f_wrapper_code, "    }\n");
+          Printf(f_wrapper_code, "}\n\n");
+          
+          Delete(self_type);
+        }
+      }
+      // Ordering operators (PartialOrd)
+      else if (strcmp(op_str, "<") == 0 || strcmp(op_str, "<=") == 0 ||
+               strcmp(op_str, ">") == 0 || strcmp(op_str, ">=") == 0) {
+        // Only generate PartialOrd once (from < operator)
+        if (strcmp(op_str, "<") == 0) {
+          Printf(f_wrapper_code, "impl std::cmp::PartialOrd for %s {\n", class_name);
+          Printf(f_wrapper_code, "    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {\n");
+          Printf(f_wrapper_code, "        if unsafe { ffi::%s(self.ptr as *const c_void, other.ptr as *const c_void) } {\n", wname);
+          Printf(f_wrapper_code, "            Some(std::cmp::Ordering::Less)\n");
+          Printf(f_wrapper_code, "        } else if unsafe { ffi::%s(other.ptr as *const c_void, self.ptr as *const c_void) } {\n", wname);
+          Printf(f_wrapper_code, "            Some(std::cmp::Ordering::Greater)\n");
+          Printf(f_wrapper_code, "        } else {\n");
+          Printf(f_wrapper_code, "            Some(std::cmp::Ordering::Equal)\n");
+          Printf(f_wrapper_code, "        }\n");
+          Printf(f_wrapper_code, "    }\n");
+          Printf(f_wrapper_code, "}\n\n");
+        }
+      }
+      // Index operator
+      else if (strcmp(op_str, "[]") == 0) {
+        if (output_type && params) {
+          // Get index type from parameter
+          SwigType *idx_type = Getattr(params, "type");
+          String *idx_rust_type = getRustUserType(idx_type);
+          
+          Printf(f_wrapper_code, "impl std::ops::Index<%s> for %s {\n", idx_rust_type, class_name);
+          Printf(f_wrapper_code, "    type Output = %s;\n", output_type);
+          
+          String *self_type = is_const_method ? NewString("&self") : NewString("&self");
+          String *idx_name = Getattr(params, "name");
+          if (!idx_name) idx_name = NewString("index");
+          
+          Printf(f_wrapper_code, "    fn index(%s, %s: %s) -> &Self::Output {\n", self_type, idx_name, idx_rust_type);
+          // Note: This is problematic because we can't safely return a reference to C++ memory
+          // For now, we generate a placeholder that creates a leak
+          Printf(f_wrapper_code, "        // WARNING: This creates a memory leak to satisfy Rust's lifetime requirements\n");
+          Printf(f_wrapper_code, "        // Consider using a method that returns an owned value instead\n");
+          Printf(f_wrapper_code, "        let val = unsafe { ffi::%s(self.ptr as *const c_void, %s as c_int) };\n", wname, idx_name);
+          Printf(f_wrapper_code, "        Box::leak(Box::new(val))\n");
+          Printf(f_wrapper_code, "    }\n");
+          Printf(f_wrapper_code, "}\n\n");
+          
+          Delete(self_type);
+          Delete(idx_rust_type);
+        }
+      }
+      // Compound assignment operators
+      else if (strcmp(op_str, "+=") == 0 || strcmp(op_str, "-=") == 0 ||
+               strcmp(op_str, "*=") == 0 || strcmp(op_str, "/=") == 0) {
+        Printf(f_wrapper_code, "impl %s for %s {\n", trait_name, class_name);
+        
+        String *self_type = is_const_method ? NewString("&mut self") : NewString("&mut self");
+        
+        // Get Rhs type from first parameter
+        Parm *rhs_param = params;
+        String *rhs_type = NULL;
+        SwigType *ptype = NULL;
+        bool rhs_is_class = false;
+        if (rhs_param) {
+          ptype = Getattr(rhs_param, "type");
+          
+          // For reference/pointer types, get the base type
+          SwigType *base_type = ptype;
+          if (SwigType_isreference(ptype) || SwigType_ispointer(ptype)) {
+            base_type = SwigType_base(ptype);
+            // Check if base is a class type
+            Node *rhs_class = classLookup(base_type);
+            if (rhs_class) {
+              rhs_is_class = true;
+              rhs_type = cleanTypeName(base_type);
+            }
+          }
+          
+          // If not a class reference/pointer, use normal type lookup
+          if (!rhs_type) {
+            rhs_type = getRustUserType(ptype);
+            // Check if rhs is a class type (has .ptr field)
+            Node *rhs_class = classLookup(ptype);
+            if (rhs_class) rhs_is_class = true;
+          }
+          
+          if (base_type != ptype) Delete(base_type);
+        }
+        if (!rhs_type) rhs_type = NewString(class_name);
+        
+        Printf(f_wrapper_code, "    fn %s(&mut self, rhs: %s) {\n", method_name, rhs_type);
+        // Handle class vs primitive types differently
+        if (rhs_is_class) {
+          Printf(f_wrapper_code, "        unsafe { ffi::%s(self.ptr, rhs.ptr as *const c_void); }\n", wname);
+        } else {
+          Printf(f_wrapper_code, "        unsafe { ffi::%s(self.ptr, rhs); }\n", wname);
+        }
+        Printf(f_wrapper_code, "    }\n");
+        Printf(f_wrapper_code, "}\n\n");
+        
+        Delete(self_type);
+        Delete(rhs_type);
+      }
+      
+      // Clean up
+      if (output_type) Delete(output_type);
+      Delete(trait_name);
+      Delete(method_name);
+    }
+    
+    Delete(operators);
+  }
+
+  /* ----------------------------------------------------------------------------- 
    * emitTypeWrapperClass()
    * 
    * Generate a type wrapper class for SWIG types.
@@ -2804,6 +3423,13 @@ private:
 
     // Generate C++ director class declaration
     // VTable mode: no VTable struct in C++, just callback function pointers
+    if (use_vtable) {
+      // Associated const VTable mode: VTable struct will be generated in classDirectorEnd
+      // after we know all the methods
+      // Generate forward declaration for C++ VTable struct
+      Printf(f_directors_h, "struct %s_VTable;  // Forward declaration\n", dirclassname);
+    }
+    
     Printf(f_directors_h, "class %s : public %s, public Swig::Director {\n", dirclassname, classtype);
     Printf(f_directors_h, "public:\n");
     // Note: constructor and destructor declarations are handled by classDirectorConstructor and Language base class
@@ -2819,10 +3445,6 @@ private:
     director_vtable_thunks = NewString("");
     director_vtable_fields_cpp = NewString("");  // C++ version of VTable fields
 
-    if (use_vtable) {
-      // Associated const VTable mode: VTable struct will be generated in classDirectorEnd
-      // after we know all the methods
-    }
 
     // Generate Rust director support
     // Director trait for Rust implementations (generated first, before VTable)
@@ -2919,15 +3541,17 @@ private:
       Printf(f_wrapper_code, "    /// Create a new %s with a Rust Director implementation using VTable\n", classname);
       Printf(f_wrapper_code, "    /// \n");
       Printf(f_wrapper_code, "    /// This uses associated constants for zero-overhead virtual dispatch.\n");
+      Printf(f_wrapper_code, "    /// The VTable is passed by reference to C++ (no copy needed).\n");
       Printf(f_wrapper_code, "    /// Requires Rust 1.20+\n");
       Printf(f_wrapper_code, "    pub fn new_with_vtable<D: %sDirector + Sized + 'static>(director: D) -> Self {\n", classname);
       Printf(f_wrapper_code, "        // Get the VTable through the VTableProvider trait\n");
       Printf(f_wrapper_code, "        let vtable: &'static %sVTable = &<D as %sVTableProvider>::VTABLE;\n", classname, classname);
       Printf(f_wrapper_code, "        // Box the director object\n");
       Printf(f_wrapper_code, "        let director_ptr = Box::into_raw(Box::new(director)) as *mut c_void;\n");
-      Printf(f_wrapper_code, "        // Pass both vtable and director pointer to C++\n");
+      Printf(f_wrapper_code, "        // Pass vtable pointer and director pointer to C++\n");
+      Printf(f_wrapper_code, "        // C++ just stores the pointer, no copying of function pointers\n");
       Printf(f_wrapper_code, "        Self {\n");
-      Printf(f_wrapper_code, "            ptr: unsafe { ffi::%s_new_director_vtable(vtable as *const %sVTable as *mut c_void, director_ptr) },\n", dirclassname, classname);
+      Printf(f_wrapper_code, "            ptr: unsafe { ffi::%s_new_director_vtable(vtable, director_ptr) },\n", dirclassname);
       Printf(f_wrapper_code, "        }\n");
       Printf(f_wrapper_code, "    }\n");
       Printf(f_wrapper_code, "}\n\n");
@@ -2992,38 +3616,25 @@ private:
     // Note: swig_rust_director_ needs to be public for the new_director function to access it
     Printf(f_directors_h, "public:\n");
     
-    // For VTable mode, save field names before outputting (needed for new_director_vtable)
-    String *vtable_field_names = NULL;
-    if (use_vtable && director_vtable_fields_cpp && Len(director_vtable_fields_cpp) > 0) {
-      // Parse field names and save them
-      vtable_field_names = NewString("");
-      char *start = Char(director_vtable_fields_cpp);
-      while (start && *start) {
-        char *paren_star = strstr(start, "(*");
-        if (!paren_star) break;
-        paren_star += 2;
-        char *close_paren = strchr(paren_star, ')');
-        if (!close_paren) break;
-        int name_len = close_paren - paren_star;
-        if (Len(vtable_field_names) > 0) {
-          Printf(vtable_field_names, ",");
-        }
-        Printf(vtable_field_names, "%.*s", name_len, paren_star);
-        start = strchr(close_paren, '\n');
-        if (start) start++;
-      }
-    }
-    
     if (use_vtable) {
-      // VTable mode: output callback function pointer members
+      // VTable mode: only store vtable pointer, not individual function pointers
+      // This is the key optimization - we pass the whole VTable by reference instead of copying each entry
+      Printf(f_directors_h, "    const %s_VTable *vtable_;  // Pointer to VTable (from Rust)\n", dirclassname);
+    }
+    Printf(f_directors_h, "    void *swig_rust_director_;  // Pointer to Rust trait object\n");
+    Printf(f_directors_h, "};\n\n");
+    
+    // For VTable mode, generate C++ VTable struct definition after the class
+    if (use_vtable) {
+      Printf(f_directors_h, "// C++ VTable struct (matches Rust #[repr(C)] layout)\n");
+      Printf(f_directors_h, "struct %s_VTable {\n", dirclassname);
       if (director_vtable_fields_cpp && Len(director_vtable_fields_cpp) > 0) {
         Dump(director_vtable_fields_cpp, f_directors_h);
         Delete(director_vtable_fields_cpp);
         director_vtable_fields_cpp = NULL;
       }
+      Printf(f_directors_h, "};\n\n");
     }
-    Printf(f_directors_h, "    void *swig_rust_director_;  // Pointer to Rust trait object\n");
-    Printf(f_directors_h, "};\n\n");
 
     // Output callback function declarations after class definition
     // (only for non-VTable modes)
@@ -3056,34 +3667,14 @@ private:
     // Generate the director new function(s)
     if (use_vtable) {
       // VTable mode: generate new_director_vtable function
-      // The vtable parameter points to a Rust VTable struct with function pointers
-      // We need to copy each function pointer to the corresponding C++ member
-      Printf(f_directors, "extern \"C\" SWIGEXPORT void *%s_new_director_vtable(void *vtable, void *rust_director) {\n", dirclassname);
+      // Optimized: just store the vtable pointer, don't copy each function pointer
+      // The Rust VTable is static (associated const) and lives for 'static lifetime
+      Printf(f_directors, "extern \"C\" SWIGEXPORT void *%s_new_director_vtable(const %s_VTable *vtable, void *rust_director) {\n", dirclassname, dirclassname);
       Printf(f_directors, "    %s *director = new %s();\n", dirclassname, dirclassname);
-      // Cast vtable to function pointer array and copy each entry
-      // The Rust VTable struct is #[repr(C)] so the layout matches C function pointer array
-      Printf(f_directors, "    // Copy function pointers from Rust VTable\n");
-      Printf(f_directors, "    typedef void (*VTableFuncPtr)();\n");
-      Printf(f_directors, "    VTableFuncPtr *entries = reinterpret_cast<VTableFuncPtr *>(vtable);\n");
-      // Copy each function pointer from the VTable using saved field names
-      if (vtable_field_names && Len(vtable_field_names) > 0) {
-        int field_index = 0;
-        String *names_copy = Copy(vtable_field_names);
-        char *token = strtok(Char(names_copy), ",");
-        while (token) {
-          Printf(f_directors, "    director->%s = reinterpret_cast<decltype(director->%s)>(entries[%d]);\n", token, token, field_index);
-          field_index++;
-          token = strtok(NULL, ",");
-        }
-        Delete(names_copy);
-      }
+      Printf(f_directors, "    director->vtable_ = vtable;  // Just store pointer, no copy needed\n");
       Printf(f_directors, "    director->swig_rust_director_ = rust_director;\n");
       Printf(f_directors, "    return director;\n");
       Printf(f_directors, "}\n\n");
-      if (vtable_field_names) {
-        Delete(vtable_field_names);
-        vtable_field_names = NULL;
-      }
     } else {
       // Non-VTable modes: generate new_director function
       Printf(f_directors, "extern \"C\" SWIGEXPORT void *%s_new_director(void *rust_director) {\n", dirclassname);
@@ -3098,7 +3689,8 @@ private:
     // Generate FFI declaration for director constructor and drop
     Printf(f_ffi_code, "    extern \"C\" {\n");
     if (use_vtable) {
-      Printf(f_ffi_code, "        pub fn %s_new_director_vtable(vtable: *mut c_void, rust_director: *mut c_void) -> *mut c_void;\n", dirclassname);
+      // Use proper VTable pointer type for type safety
+      Printf(f_ffi_code, "        pub fn %s_new_director_vtable(vtable: *const super::%sVTable, rust_director: *mut c_void) -> *mut c_void;\n", dirclassname, classname);
     } else {
       Printf(f_ffi_code, "        pub fn %s_new_director(rust_director: *mut c_void) -> *mut c_void;\n", dirclassname);
     }
@@ -3331,15 +3923,15 @@ private:
       // Note: Don't Delete callback_suffix here - it's used later for VTable fields and thunks
       
       if (use_vtable) {
-        // VTable mode: call the stored callback function pointer directly
-        // The member variable name must match the field name in director_vtable_fields_cpp
+        // VTable mode: call through vtable_ pointer instead of member variable
+        // This avoids copying all function pointers - we just store one vtable pointer
         String *vtable_field_suffix = emitOverloadSuffix(l);
         String *callback_ptr_name = NewStringf("%s%s", name, vtable_field_suffix);
         
         if (!is_void) {
-          Printf(f_directors, "        if (%s) {\n", callback_ptr_name);
+          Printf(f_directors, "        if (vtable_ && vtable_->%s) {\n", callback_ptr_name);
           Printf(f_directors, "            %s result;\n", ret_str);
-          Printf(f_directors, "            if (%s(swig_rust_director_, &result", callback_ptr_name);
+          Printf(f_directors, "            if (vtable_->%s(swig_rust_director_, &result", callback_ptr_name);
           if (l) {
             for (Parm *p = l; p; p = nextSibling(p)) {
               String *pn = Getattr(p, "name");
@@ -3352,8 +3944,8 @@ private:
           Printf(f_directors, "        }\n");
         } else {
           // void return type
-          Printf(f_directors, "        if (%s) {\n", callback_ptr_name);
-          Printf(f_directors, "            if (%s(swig_rust_director_", callback_ptr_name);
+          Printf(f_directors, "        if (vtable_ && vtable_->%s) {\n", callback_ptr_name);
+          Printf(f_directors, "            if (vtable_->%s(swig_rust_director_", callback_ptr_name);
           if (l) {
             for (Parm *p = l; p; p = nextSibling(p)) {
               String *pn = Getattr(p, "name");

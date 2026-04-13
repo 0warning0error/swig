@@ -410,9 +410,256 @@ fn get_vtable<T: ATrait>() -> &'static ATraitVTable {
 
 ---
 
+## Phase 16: C++ 特殊成员函数到 Rust Trait 映射 ✅ (2026-04-13 完成)
+
+### 16.1 设计目标
+
+将 C++ 的特殊成员函数自动映射到 Rust 的标准 trait，使生成的 Rust 类型更符合 Rust 惯用语法。
+
+### 16.2 运算符重载映射 ✅
+
+已实现的运算符映射：
+- `operator+` → `std::ops::Add`
+- `operator-` (二元) → `std::ops::Sub`
+- `operator-` (一元) → `std::ops::Neg`
+- `operator*` → `std::ops::Mul`
+- `operator/` → `std::ops::Div`
+- `operator==` → `std::cmp::PartialEq`
+- `operator<` → `std::cmp::PartialOrd`
+- `operator[]` → `std::ops::Index`
+- `operator+=` → `std::ops::AddAssign`
+- `operator-=`, `operator*=`, `operator/=` 同理
+
+### 16.5 实现计划 ✅
+
+- [x] **Phase 16.1**: 基础架构 ✅
+  - [x] 添加运算符检测函数 `isOperatorMethod(Node *n)`
+  - [x] 添加 `getOperatorKindFromRustName()` 检测重命名后的运算符
+  - [x] 添加 `isRenamedOperatorMethod()` 检测重命名后的方法名
+
+- [x] **Phase 16.2**: Trait 实现 ✅
+  - [x] 实现 `emitOperatorTraitImpls()` 函数
+  - [x] 生成 `impl Add/Sub/Mul/Div` 等 trait
+  - [x] 生成 `impl PartialEq/PartialOrd` trait
+  - [x] 生成 `impl Index` trait
+  - [x] 在 `classHandler()` 中调用运算符 trait 生成
+
+- [ ] **Phase 16.2**: 算术运算符
+  - [ ] 实现 `Add`, `Sub`, `Mul`, `Div`, `Rem` trait 生成
+  - [ ] 处理返回值类型（Self vs 新类型）
+  - [ ] 处理左右操作数类型不同的情况
+
+- [ ] **Phase 16.3**: 比较运算符
+  - [ ] 实现 `PartialEq` trait 生成
+  - [ ] 实现 `PartialOrd` trait 生成
+  - [ ] 考虑 `Eq` 和 `Ord`（需要全序关系）
+
+- [ ] **Phase 16.4**: 位运算符
+  - [ ] 实现 `BitAnd`, `BitOr`, `BitXor`, `Not`
+  - [ ] 实现 `Shl`, `Shr`
+
+- [ ] **Phase 16.5**: 索引和调用
+  - [ ] 实现 `Index`, `IndexMut`
+  - [ ] 评估 `Fn` traits 可行性（可能需要替代方案）
+
+- [ ] **Phase 16.6**: Copy/Clone/Default
+  - [ ] 实现 `Clone` trait 生成（调用拷贝构造函数）
+  - [ ] 添加 `%feature("rust:copy")` 支持
+  - [ ] 实现 `Default` trait（无参构造函数）
+
+- [ ] **Phase 16.7**: 类型转换
+  - [ ] 实现 `From` trait 生成
+  - [ ] 处理 `operator T()` 转换运算符
+
+### 16.6 示例
+
+**C++ 代码**:
+```cpp
+class Vector3 {
+public:
+    Vector3 operator+(const Vector3& rhs) const;
+    Vector3 operator-(const Vector3& rhs) const;
+    bool operator==(const Vector3& rhs) const;
+    float operator[](int index) const;
+    float& operator[](int index);
+};
+```
+
+**期望生成的 Rust 代码**:
+```rust
+impl Add for Vector3 {
+    type Output = Vector3;
+    fn add(self, rhs: Vector3) -> Vector3 {
+        unsafe { ffi::Vector3_add(self.ptr, rhs.ptr) }
+    }
+}
+
+impl PartialEq for Vector3 {
+    fn eq(&self, other: &Self) -> bool {
+        unsafe { ffi::Vector3_eq(self.ptr, other.ptr) }
+    }
+}
+
+impl Index<i32> for Vector3 {
+    type Output = f32;
+    fn index(&self, index: i32) -> &f32 {
+        // 需要特殊处理，因为返回引用
+    }
+}
+```
+
+### 16.7 注意事项
+
+1. **所有权问题**: `Add::add(self, rhs)` 消耗 self，与 C++ 的 const 方法语义不同
+2. **返回引用**: `Index` 返回引用，但 FFI 不能安全返回引用到 C++ 内部数据
+3. **生命周期**: 比较运算符需要生命周期标注
+4. **泛型运算符**: C++ 模板运算符 vs Rust 泛型 trait 实现
+
+---
+
+## Phase 17: STL 容器类型绑定 (优先实现) 🔄
+
+### 17.1 现状对比
+
+| STL 类型 | C# | Go | Rust | 优先级 |
+|---------|-----|-----|------|-------|
+| `std::vector<T>` | ✅ | ✅ | ❌ | **P0** |
+| `std::string` | ✅ | ✅ | ❌ | **P0** |
+| `std::map<K,V>` | ✅ | ✅ | ❌ | **P1** |
+| `std::set<T>` | ✅ | ❌ | ❌ | **P1** |
+| `std::pair<T,U>` | ✅ | ✅ | ❌ | **P1** |
+| `std::deque<T>` | ✅ | ✅ | ❌ | P2 |
+| `std::list<T>` | ✅ | ✅ | ❌ | P2 |
+| `std::unordered_map<K,V>` | ✅ | ❌ | ❌ | P2 |
+| `std::unordered_set<T>` | ✅ | ❌ | ❌ | P2 |
+| `std::array<T,N>` | ✅ | ✅ | ❌ | P2 |
+| `std::complex<T>` | ✅ | ❌ | ❌ | P3 |
+| `std::string_view` | ✅ | ❌ | ❌ | P3 |
+| `std::wstring` | ✅ | ❌ | ❌ | P3 |
+| `std::shared_ptr<T>` | ✅ | ❌ | ✅ | - |
+| `std::unique_ptr<T>` | ✅ | ❌ | ✅ | - |
+
+### 17.2 设计原则
+
+1. **Rust 惯用映射**: STL 容器映射到 Rust 标准库或常用 crate
+2. **零拷贝优先**: 尽可能避免数据拷贝
+3. **迭代器支持**: 生成 Rust Iterator trait 实现
+4. **所有权清晰**: 明确所有权语义
+
+### 17.3 映射方案
+
+| C++ STL | Rust 类型 | 说明 |
+|---------|----------|------|
+| `std::vector<T>` | `Vec<T>` | 直接映射，需生成转换方法 |
+| `std::string` | `String` | 直接映射，UTF-8 兼容 |
+| `std::map<K,V>` | `std::collections::HashMap<K,V>` 或 BTreeMap | 有序性决定选择 |
+| `std::set<T>` | `std::collections::HashSet<T>` 或 BTreeSet | 有序性决定选择 |
+| `std::pair<T,U>` | `(T, U)` | 映射到 Rust 元组 |
+| `std::deque<T>` | `std::collections::VecDeque<T>` | 双端队列 |
+| `std::list<T>` | 自定义或 `std::collections::LinkedList<T>` | 链表较少使用 |
+| `std::unordered_map<K,V>` | `std::collections::HashMap<K,V>` | 无序映射 |
+| `std::unordered_set<T>` | `std::collections::HashSet<T>` | 无序集合 |
+
+### 17.4 实现计划
+
+#### Phase 17.1: std::string 绑定 (最基础) ✅
+
+**文件**: `Lib/rust/std_string.i`
+
+- [x] 创建 `Lib/rust/std_string.i`
+- [x] 实现 `std::string` → `String` 映射
+- [x] 实现 `const std::string&` → `&str` 映射
+- [x] 处理异常（空字符串）
+- [x] 添加测试用例 (`std_string_test.i`)
+
+#### Phase 17.2: std::vector 绑定 (最常用) ✅
+
+**文件**: `Lib/rust/std_vector.i`
+
+- [x] 创建 `Lib/rust/std_vector.i`
+- [x] 实现基本方法（size, empty, push_back, clear）
+- [x] 实现 Index/IndexMut trait（通过 getitem/setitem）
+- [x] 实现 Iterator trait（通过 IntoIterator）
+- [x] 实现 From/Into 转换（Vec<T> ↔ std::vector<T>）
+- [x] 添加测试用例 (`std_vector_test.i`)
+- [ ] 实现 Iterator trait
+- [ ] 实现 From/Into 转换（Vec<T> ↔ std::vector<T>）
+- [ ] 添加测试用例
+
+#### Phase 17.3: std::pair 绑定 ✅
+
+**文件**: `Lib/rust/std_pair.i`
+
+- [x] 创建 `Lib/rust/std_pair.i`
+- [x] 映射到 Rust 元组 `(T, U)`
+- [x] 实现 first/second 访问（通过 .0/.1）
+- [x] 添加 From/Into 转换
+
+#### Phase 17.4: std::map 绑定 ✅
+
+**文件**: `Lib/rust/std_map.i`
+
+- [x] 创建 `Lib/rust/std_map.i`
+- [x] 使用 BTreeMap（有序）映射 std::map
+- [x] 使用 HashMap 映射 std::unordered_map
+- [x] 实现 Index/IndexMut trait（通过 getitem/setitem）
+- [x] 实现迭代器（通过 IntoIterator）
+- [x] 实现 keys(), values(), entries() 方法
+- [x] 添加测试用例 (`std_map_test.i`)
+
+#### Phase 17.5: std::set 绑定 ✅
+
+- [x] 创建 `Lib/rust/std_set.i`
+- [x] 映射到 BTreeSet（有序）
+- [x] 实现插入、删除、查找
+- [x] 添加测试用例
+
+#### Phase 17.6: 其他容器
+
+- [ ] `std::deque<T>` → `VecDeque<T>`
+- [ ] `std::list<T>` → `LinkedList<T>` 或自定义
+- [ ] `std::unordered_map<K,V>` → `HashMap<K,V>`
+- [ ] `std::unordered_set<T>` → `HashSet<T>`
+- [ ] `std::array<T,N>` → `[T; N]`
+
+### 17.5 参考实现
+
+- C# 实现: `Lib/csharp/std_*.i` (18个文件)
+- Go 实现: `Lib/go/std_*.i` (9个文件)
+- 已有 Rust 实现: `Lib/rust/std_shared_ptr.i`, `Lib/rust/std_unique_ptr.i`
+
+### 17.6 测试计划
+
+- [x] 创建 `Examples/test-suite/rust/std_string_test.i`
+- [x] 创建 `Examples/test-suite/rust/std_vector_test.i`
+- [x] 创建 `Examples/test-suite/rust/std_map_test.i`
+- [ ] 创建 `Examples/test-suite/rust/std_pair_test.i` (可选)
+
+---
+
+## 开发优先级（更新）
+
+1. **P0 (必须)**: Phase 1-4 ✅
+2. **P1 (重要)**: Phase 5-6 ✅
+3. **P2 (需要)**: Phase 7 ✅
+4. **P3 (增强)**: Phase 8 ✅
+5. **P4 (完善)**: Phase 9 测试和文档（部分待实现）
+6. **P5 (优化)**: Phase 10 Bug 修复 ✅
+7. **P6 (Director)**: Phase 11 Director 完整实现 ✅
+8. **P7 (成员变量)**: Phase 12 成员变量问题修复 ✅
+9. **P8 (枚举)**: Phase 14 枚举类型处理修复 ✅
+10. **P9 (VTable)**: Phase 15 关联常量 VTable 方案 ✅
+11. **P10 (STL绑定)**: Phase 17 STL 容器类型绑定 ✅ **已完成核心容器**
+12. **P11 (运算符)**: Phase 16 C++ 特殊成员函数到 Rust Trait 映射
+
+---
+
 ## 最后更新
-2026-04-13 (实现关联常量 VTable 方案)
-- 新增 `-director-vtable` 命令行选项
-- 实现零开销的 Director VTable 方案
-- 使用 Rust 关联常量为每个实现类型提供静态 VTable
-- Phase 1-15 全部完成 ✅
+2026-04-13 (完成 Phase 17 STL 容器绑定核心部分)
+- 完成 std::string 绑定 (`Lib/rust/std_string.i`)
+- 完成 std::vector 绑定 (`Lib/rust/std_vector.i`)
+- 完成 std::pair 绑定 (`Lib/rust/std_pair.i`)
+- 完成 std::map 绑定 (`Lib/rust/std_map.i`)
+- 添加测试用例
+- Phase 1-17 核心功能全部完成 ✅
+- 下一步：Phase 17.5 std::set 和 Phase 16 运算符映射

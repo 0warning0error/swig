@@ -260,7 +260,79 @@ $env:SWIG_LIB="D:\code\cpp\swig\Lib"
 ---
 
 ## 最后更新
-2026-04-12 (修复枚举类型生成问题)
+2026-04-13 (完成 Phase 16-18 运算符 Trait 完善和 STL 容器扩展)
+
+### Phase 18: STL 容器扩展 (2026-04-13 完成)
+
+**新增文件**:
+- `Lib/rust/std_deque.i` - std::deque → VecDeque 映射
+- `Lib/rust/std_list.i` - std::list → LinkedList 映射
+- `Lib/rust/std_unordered_map.i` - std::unordered_map → HashMap 映射
+- `Lib/rust/std_unordered_set.i` - std::unordered_set → HashSet 映射
+
+**支持的容器映射**:
+| C++ 容器 | Rust 类型 | 说明 |
+|---------|----------|------|
+| std::vector<T> | Vec<T> | 动态数组 |
+| std::deque<T> | VecDeque<T> | 双端队列 |
+| std::list<T> | LinkedList<T> | 双向链表 |
+| std::map<K,V> | BTreeMap | 有序映射 |
+| std::set<T> | BTreeSet | 有序集合 |
+| std::unordered_map<K,V> | HashMap | 无序映射 |
+| std::unordered_set<T> | HashSet | 无序集合 |
+
+### Phase 16: 运算符 Trait 实现 ✅ (2026-04-13 完成)
+
+**修复**: 运算符参数类型处理问题
+- 引用类型参数现在正确获取类名
+- 基本类型参数直接传递值
+- 类类型参数使用 `.ptr` 字段
+
+**验证**: test_operator.i 生成的代码正确：
+- `impl Add for Vector2` - rhs: Vector2
+- `impl Mul for Vector2` - rhs: f64
+- `impl PartialEq for Vector2` - other: &Self
+- `impl PartialOrd for Point` - other: &Self
+
+### Phase 16: 运算符映射基础架构 ✅ (2026-04-13 完成)
+
+**实现内容**:
+- 添加 `isOperatorMethod()` - 检测方法是否是 C++ 运算符重载
+- 添加 `getOperatorKind()` - 获取运算符类型（如 "+", "-", "=="）
+- 添加 `getRustOperatorTrait()` - 获取对应的 Rust trait 名称
+- 添加 `getRustOperatorMethodName()` - 获取 Rust trait 方法名
+- 添加 `getRustOperatorName()` - 获取有效的 Rust 方法名
+
+**运算符映射表**:
+| C++ 运算符 | Rust 方法名 | Rust trait |
+|-----------|------------|------------|
+| `operator+` | `op_add` | `std::ops::Add` |
+| `operator-` (二元) | `op_sub` | `std::ops::Sub` |
+| `operator-` (一元) | `op_neg` | `std::ops::Neg` |
+| `operator*` | `op_mul` | `std::ops::Mul` |
+| `operator/` | `op_div` | `std::ops::Div` |
+| `operator==` | `op_eq` | `std::cmp::PartialEq` |
+| `operator!=` | `op_ne` | `std::cmp::PartialEq` |
+| `operator<` | `op_lt` | `std::cmp::PartialOrd` |
+| `operator<=` | `op_le` | `std::cmp::PartialOrd` |
+| `operator>` | `op_gt` | `std::cmp::PartialOrd` |
+| `operator>=` | `op_ge` | `std::cmp::PartialOrd` |
+| `operator[]` | `op_index` | `std::ops::Index` |
+| `operator+=` | `op_add_assign` | `std::ops::AddAssign` |
+
+**测试文件**: `test_operator.i` - Vector2 和 Point 类运算符测试
+
+### Phase 17.5: std::set 绑定 ✅ (2026-04-13 完成)
+
+**新增文件**: `Lib/rust/std_set.i`
+
+**支持内容**:
+- `std::set<T>` → `BTreeSet<T>` (有序集合)
+- `std::unordered_set<T>` → `HashSet<T>` (无序集合)
+- 基本方法：size, empty, insert, erase, clear, contains
+- 扩展方法：to_vec, insert_new, remove
+
+**测试文件**: `Examples/test-suite/rust/std_set_test.i`
 
 ### Phase 14: 枚举类型处理修复 ✅
 
@@ -320,3 +392,195 @@ $env:SWIG_LIB="D:\code\cpp\swig\Lib"
 #### 默认参数 Builder 模式
 - 为 C++ 默认参数生成 Rust Builder 模式
 - 详见 RUST_DESIGN.md 第11章
+
+---
+
+## 2026-04-13 Phase 17: STL 容器绑定 ✅
+
+### 新增文件
+
+| 文件 | 说明 |
+|------|------|
+| `Lib/rust/std_string.i` | std::string → String 映射 |
+| `Lib/rust/std_vector.i` | std::vector<T> → Vec<T> 映射 |
+| `Lib/rust/std_pair.i` | std::pair<T, U> → (T, U) 映射 |
+| `Lib/rust/std_map.i` | std::map<K, V> → BTreeMap 映射 |
+
+### std::string 绑定
+
+```swig
+%typemap(rusttype) std::string "String"
+%typemap(rusttype) const std::string & "&str"
+```
+
+- 支持 std::string → String (owned)
+- 支持 const std::string& → &str (borrowed)
+- 支持异常处理
+
+### std::vector 绑定
+
+```swig
+%template(IntVector) std::vector<int>;
+RUST_VECTOR_TRAITS(int, IntVector)
+```
+
+- 提供基本方法：size, empty, push_back, clear
+- 提供 Index/IndexMut trait（通过 getitem/setitem）
+- 提供 IntoIterator trait
+- 提供 From/Into 与 Vec<T> 转换
+- 提供 Rust 风格方法：len, is_empty, contains, reverse, sort
+
+### std::map 绑定
+
+```swig
+%template(IntIntMap) std::map<int, int>;
+RUST_MAP_TRAITS(int, int, IntIntMap)
+```
+
+- std::map → BTreeMap (有序)
+- std::unordered_map → HashMap (无序)
+- 提供 keys(), values(), entries() 方法
+- 提供 From/Into 与 BTreeMap 转换
+
+### 测试用例
+
+- `Examples/test-suite/rust/std_string_test.i`
+- `Examples/test-suite/rust/std_vector_test.i`
+- `Examples/test-suite/rust/std_map_test.i`
+
+---
+
+## 2026-04-13 本次会话：Phase 16 运算符 Trait 实现 ✅
+
+### 实现内容
+
+1. **新增辅助函数**:
+   - `getOperatorKindFromRustName()` - 反向映射：从重命名后的方法名（如 `op_add`）返回运算符类型（如 `+`）
+   - `isRenamedOperatorMethod()` - 检测方法名是否是重命名后的运算符方法
+
+2. **新增核心函数** `emitOperatorTraitImpls(Node *n)`:
+   - 遍历类的所有成员函数
+   - 检测运算符方法（包括原始名 `operator +` 和重命名后 `op_add`）
+   - 为每个运算符生成对应的 Rust 标准库 trait 实现
+
+3. **支持的运算符映射**:
+   | C++ 运算符 | Rust Trait | 方法签名 |
+   |-----------|------------|---------|
+   | `operator+` | `std::ops::Add` | `fn add(&self, rhs: Rhs) -> Self::Output` |
+   | `operator-` (二元) | `std::ops::Sub` | `fn sub(&self, rhs: Rhs) -> Self::Output` |
+   | `operator-` (一元) | `std::ops::Neg` | `fn neg(&self) -> Self::Output` |
+   | `operator*` | `std::ops::Mul` | `fn mul(&self, rhs: Rhs) -> Self::Output` |
+   | `operator/` | `std::ops::Div` | `fn div(&self, rhs: Rhs) -> Self::Output` |
+   | `operator==` | `std::cmp::PartialEq` | `fn eq(&self, other: &Self) -> bool` |
+   | `operator<` | `std::cmp::PartialOrd` | `fn partial_cmp(&self, other: &Self) -> Option<Ordering>` |
+   | `operator[]` | `std::ops::Index` | `fn index(&self, index: Idx) -> &Self::Output` |
+   | `operator+=` | `std::ops::AddAssign` | `fn add_assign(&mut self, rhs: Rhs)` |
+
+4. **生成的代码示例**:
+```rust
+impl std::ops::Add for Vector2 {
+    type Output = Vector2;
+    fn add(&self, rhs: Vector2) -> Self::Output {
+        Vector2 { ptr: unsafe { ffi::Rust_Vector2_op_add__SWIG_0(self.ptr, rhs.ptr) } }
+    }
+}
+
+impl std::cmp::PartialEq for Vector2 {
+    fn eq(&self, other: &Self) -> bool {
+        unsafe { ffi::Rust_Vector2_op_eq__SWIG_0(self.ptr, other.ptr) }
+    }
+}
+```
+
+5. **使用方式**:
+   - 在 SWIG 接口文件中使用 `%rename_operators` 宏重命名运算符
+   - 代码生成器自动检测并生成 trait 实现
+   - 用户可以直接使用 Rust 运算符语法：`v1 + v2`, `v1 == v2`, `v1 < v2`
+
+### 待改进项
+
+- [ ] 修复 trait 实现中的参数类型（使用正确类型而非 `*mut c_void`）
+- [ ] 处理 `operator[]` 返回引用的生命周期问题
+- [ ] 添加更多运算符测试用例
+
+---
+
+## 2026-04-13 Director VTable 优化 ✅
+
+### 问题背景
+
+原 VTable 模式下，C++ Director 类会逐个复制 Rust 端的函数指针到成员变量：
+
+```cpp
+// 旧实现：每个虚函数一个成员变量
+class SwigDirector_CallbackBase : public CallbackBase {
+public:
+    bool (*onEvent_int)(void*, int);  // 复制的函数指针
+    bool (*getResult)(void*, int*);   // 复制的函数指针
+    void *swig_rust_director_;
+};
+
+// 构造时需要逐个复制
+extern "C" void *SwigDirector_CallbackBase_new_director_vtable(void *vtable, void *rust_director) {
+    VTableFuncPtr *entries = reinterpret_cast<VTableFuncPtr *>(vtable);
+    director->onEvent_int = entries[0];   // 复制
+    director->getResult = entries[1];     // 复制
+    // ...
+}
+```
+
+### 优化方案
+
+C++ 端定义与 Rust 一致的 VTable 结构体，只存储一个指针：
+
+```cpp
+// 优化后：只存储 VTable 指针
+struct SwigDirector_CallbackBase_VTable {
+    bool (*onEvent_int)(void*, int);
+    bool (*getResult)(void*, int*);
+};
+
+class SwigDirector_CallbackBase : public CallbackBase {
+public:
+    const SwigDirector_CallbackBase_VTable *vtable_;  // 只存一个指针！
+    void *swig_rust_director_;
+    
+    virtual void onEvent(int id) override {
+        if (vtable_ && vtable_->onEvent_int) {
+            vtable_->onEvent_int(swig_rust_director_, id);
+        }
+    }
+};
+
+// 构造时直接存储指针，无需复制
+extern "C" void *SwigDirector_CallbackBase_new_director_vtable(
+    const SwigDirector_CallbackBase_VTable *vtable, void *rust_director) {
+    director->vtable_ = vtable;  // 只存指针
+    director->swig_rust_director_ = rust_director;
+}
+```
+
+### 优化效果
+
+| 方面 | 优化前 | 优化后 |
+|------|--------|--------|
+| 构造时复制 | N 次函数指针复制 | 0 次（只存指针） |
+| 成员变量数量 | N + 1 | 2 |
+| 代码复杂度 | 逐个复制逻辑 | 直接使用指针 |
+| 内存布局 | 分散的成员变量 | 紧凑的 VTable 结构 |
+
+### 实现修改
+
+1. **`classDirectorInit()`**: 生成 C++ VTable 结构体前置声明
+2. **`classDirectorMethod()`**: 虚函数从 `vtable_->method` 取函数指针
+3. **`classDirectorEnd()`**: 
+   - 只输出 `vtable_` 指针成员
+   - 在类后定义 VTable 结构体
+   - `new_director_vtable` 直接存储指针
+4. **FFI 声明**: 使用 `*const VTable` 类型而非 `*mut c_void`
+
+### 测试验证
+
+- 测试文件: `test_vtable_opt.i`
+- 生成代码验证通过
+- C++ 端只存储一个 VTable 指针

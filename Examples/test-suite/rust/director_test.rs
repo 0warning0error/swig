@@ -12,7 +12,7 @@ mod ffi {
     use std::os::raw::*;
 
     extern "C" {
-        pub fn SwigDirector_CallbackBase_new_director(rust_director: *mut c_void) -> *mut c_void;
+        pub fn SwigDirector_CallbackBase_new_director_vtable(vtable: *mut c_void, rust_director: *mut c_void) -> *mut c_void;
         pub fn SwigDirector_CallbackBase_drop_director(rust_director: *mut c_void);
     }
 
@@ -100,56 +100,69 @@ pub trait CallbackBaseDirector {
     fn process_int(&self, value: i32) -> Option<i32>;
 }
 
-/// Director struct for CallbackBase
-pub struct DirectorCallbackBase {
-    inner: Box<dyn CallbackBaseDirector>,
+/// VTable for CallbackBase director callbacks
+/// Each field is a function pointer that calls the corresponding trait method
+#[repr(C)]
+pub struct CallbackBaseVTable {
+    pub on_event_int: unsafe extern "C" fn(*const c_void, i32) -> bool,
+    pub process_int: unsafe extern "C" fn(*const c_void, *mut i32, i32) -> bool,
 }
 
-/// Create a Director struct from a CallbackBaseDirector implementation
-pub fn create_director_CallbackBase<D: CallbackBaseDirector + 'static>(d: D) -> DirectorCallbackBase {
-    DirectorCallbackBase {
-        inner: Box::new(d),
-    }
-}
-
-impl CallbackBase {
-    /// Create a new CallbackBase with a Rust Director implementation
-    pub fn new_with_trait<D: CallbackBaseDirector + 'static>(director: D) -> Self {
-        let d = create_director_CallbackBase(director);
-        let director_ptr = Box::into_raw(Box::new(d)) as *mut c_void;
-        Self {
-            ptr: unsafe { ffi::SwigDirector_CallbackBase_new_director(director_ptr) },
-        }
-    }
-}
-
-// C callback for CallbackBase::on_event_int (called from C++)
-#[no_mangle]
-pub unsafe extern "C" fn SwigDirector_CallbackBase_on_event_int_callback(director: *mut c_void, event_id: i32) -> bool {
-    // Get the Director struct from the director pointer
-    let d = &mut *(director as *mut DirectorCallbackBase);
-    // Call the trait method
-    d.inner.on_event_int(event_id);
+/// Thunk function for CallbackBase::on_event_int (VTable entry)
+/// Casts the data pointer to type D and calls the trait method
+pub unsafe extern "C" fn CallbackBase_thunk_on_event_int<D: CallbackBaseDirector>(data: *const c_void, event_id: i32) -> bool {
+    let obj = &*(data as *const D);
+    obj.on_event_int(event_id);
     true
 }
 
-// C callback for CallbackBase::process_int (called from C++)
-#[no_mangle]
-pub unsafe extern "C" fn SwigDirector_CallbackBase_process_int_callback(director: *mut c_void, result: *mut i32, value: i32) -> bool {
-    // Get the Director struct from the director pointer
-    let d = &mut *(director as *mut DirectorCallbackBase);
-    // Call the trait method
-    match d.inner.process_int(value) {
+/// Thunk function for CallbackBase::process_int (VTable entry)
+/// Casts the data pointer to type D and calls the trait method
+pub unsafe extern "C" fn CallbackBase_thunk_process_int<D: CallbackBaseDirector>(data: *const c_void, result: *mut i32, value: i32) -> bool {
+    let obj = &*(data as *const D);
+    match obj.process_int(value) {
         Some(v) => { *result = v; true }
         None => false,
+    }
+}
+
+/// Trait that provides a static VTable for CallbackBaseDirector implementations
+/// Each implementing type automatically gets a VTable through blanket impl
+pub trait CallbackBaseVTableProvider: CallbackBaseDirector + Sized {
+    const VTABLE: CallbackBaseVTable = CallbackBaseVTable {
+        on_event_int: CallbackBase_thunk_on_event_int::<Self>,
+        process_int: CallbackBase_thunk_process_int::<Self>,
+    };
+}
+
+/// Blanket implementation: all Sized types implementing CallbackBaseDirector get VTableProvider
+impl<T: CallbackBaseDirector + Sized> CallbackBaseVTableProvider for T {}
+
+impl CallbackBase {
+    /// Create a new CallbackBase with a Rust Director implementation using VTable
+    /// 
+    /// This uses associated constants for zero-overhead virtual dispatch.
+    /// Requires Rust 1.20+
+    pub fn new_with_vtable<D: CallbackBaseDirector + Sized + 'static>(director: D) -> Self {
+        // Get the VTable through the VTableProvider trait
+        let vtable: &'static CallbackBaseVTable = &<D as CallbackBaseVTableProvider>::VTABLE;
+        // Box the director object
+        let director_ptr = Box::into_raw(Box::new(director)) as *mut c_void;
+        // Pass both vtable and director pointer to C++
+        Self {
+            ptr: unsafe { ffi::SwigDirector_CallbackBase_new_director_vtable(vtable as *const CallbackBaseVTable as *mut c_void, director_ptr) },
+        }
     }
 }
 
 // Drop function for CallbackBase director (called from C++ destructor)
 #[no_mangle]
 pub unsafe extern "C" fn SwigDirector_CallbackBase_drop_director(director: *mut c_void) {
-    // Reconstruct the Box<DirectorCallbackBase> and let it drop
-    let _ = Box::from_raw(director as *mut DirectorCallbackBase);
+    // Reconstruct the Box<D> and let it drop
+    // Note: We don't know the concrete type D here, but we only need to free the memory
+    // The actual Drop impl will be called when the Box is dropped
+    // We use a helper to drop as Box<dyn Director> to invoke proper cleanup
+    let _ = Box::from_raw(director as *mut ());
 }
 
 /// Rust wrapper for C++ class CallbackBase

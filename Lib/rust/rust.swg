@@ -22,6 +22,18 @@
 // Enable const correctness
 %feature("constcorrect");
 
+// Note: %feature("nspace") is NOT enabled by default for Rust.
+// Reason: Rust does not allow the same module to be defined multiple times.
+// If you have multiple classes in the same namespace, enabling nspace would
+// generate multiple "pub mod X { ... }" blocks, which Rust rejects.
+//
+// Alternative approaches:
+// 1. Use -namespace <name> command line option to wrap everything in one module
+// 2. Use %rename to add prefixes to avoid name collisions
+// 3. Process each namespace in a separate SWIG run
+//
+// Future improvement: Collect all namespace content and generate a single mod per namespace.
+
 /* -----------------------------------------------------------------------------
  * Operator Renaming Macros
  * 

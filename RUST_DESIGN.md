@@ -416,18 +416,7 @@ pub trait HandlerTrait {
 
 ---
 
-## 6. 输出文件结构
-
-```
-xxx_wrap.cxx    → C++ extern "C" 包装函数
-xxx_wrap.h      → C 头文件（director 需要）
-xxx.rs          → Rust FFI 声明 + 高层包装
-Cargo.toml      → 可选生成
-```
-
----
-
-## 7. 命令行选项
+## 6. 命令行选项
 
 ```
 -rust              启用 Rust 模块
@@ -440,7 +429,7 @@ Cargo.toml      → 可选生成
 
 ---
 
-## 8. 错误处理映射
+## 7. 错误处理映射
 
 | C++ 方式 | Rust 方式 |
 |---------|-----------|
@@ -450,7 +439,7 @@ Cargo.toml      → 可选生成
 
 ---
 
-## 9. 参考实现
+## 8. 参考实现
 
 参考 SWIG 现有模块：
 - `Source/Modules/go.cxx` - Go 模块，struct + interface 模式
@@ -459,7 +448,7 @@ Cargo.toml      → 可选生成
 
 ---
 
-## 10. 函数重载处理
+## 9. 函数重载处理
 
 ### 10.1 问题背景
 
@@ -563,7 +552,7 @@ foo.draw(Point { x: 10, y: 20 });
 
 ---
 
-## 11. 默认参数处理
+## 10. 默认参数处理
 
 ### 11.1 问题背景
 
@@ -672,7 +661,7 @@ foo.configure(ConfigureArgs::new(8080));
 
 ---
 
-## 12. Rust 版本兼容性
+## 11. Rust 版本兼容性
 
 ### 12.1 设计原则
 
@@ -718,7 +707,484 @@ foo.configure(ConfigureArgs::new(8080));
 
 ---
 
-## 13. 与其他 Rust 绑定工具对比
+## 12. 输出文件结构
+
+### 13.1 单文件模式
+
+```
+xxx_wrap.cxx    → C++ extern "C" 包装函数
+xxx_wrap.h      → C 头文件（director 需要）
+xxx.rs          → Rust FFI 声明 + 高层包装
+Cargo.toml      → 可选生成
+```
+
+### 13.2 多文件模式（启用命名空间映射时）
+
+```
+output/
+├── lib.rs              # 根模块
+├── namespace1.rs       # 或 namespace1/mod.rs
+├── namespace1/
+│   └── nested.rs
+└── ...
+```
+
+---
+
+## 13. 命名空间映射设计
+
+### 14.1 问题背景
+
+C++ 命名空间和 Rust mod 有根本性差异：
+
+| 特性 | C++ 命名空间 | Rust mod |
+|------|-------------|----------|
+| 定义方式 | 可分散定义（多处、多文件） | 必须集中定义 |
+| 扩展性 | 可随时添加新成员 | 模块树固定 |
+| 文件对应 | 与文件无关 | 一个文件 = 一个模块（或子模块声明） |
+| 匿名 | 支持匿名命名空间 | 无等价概念 |
+| 别名 | 支持 `namespace A = B::C` | 使用 `use` 重导出 |
+
+**核心矛盾**：C++ 命名空间可以分散定义，但 Rust mod 必须集中在一个地方。
+
+```cpp
+// C++: 合法 - 命名空间可以分散定义
+// file1.cpp
+namespace math {
+    struct Vector { ... };
+}
+
+// file2.cpp
+namespace math {
+    struct Matrix { ... };  // 扩展 math 命名空间
+}
+
+// file3.cpp
+namespace math {
+    namespace linear {
+        struct Transform { ... };
+    }
+}
+```
+
+```rust
+// Rust: 一个文件不能多次定义同一个 mod
+mod math {
+    struct Vector { ... }
+}
+mod math {  // 错误！重复定义
+    struct Matrix { ... }
+}
+```
+
+### 14.2 设计方案
+
+#### 方案概述：合并生成 + 嵌套模块
+
+**核心策略**：SWIG 在代码生成阶段合并所有同名命名空间的定义，生成单一的 Rust 模块。
+
+```
+C++ 分散定义                  Rust 合并生成
+─────────────────            ─────────────────
+file1: ns::ClassA      ─┐
+file2: ns::ClassB      ─┼──>  ns.rs (或 ns/mod.rs)
+file3: ns::ClassC      ─┘        包含 ClassA, ClassB, ClassC
+```
+
+#### 14.2.1 单一输入文件场景
+
+```cpp
+// input.i
+namespace graphics {
+    struct Point { ... };
+    struct Color { ... };
+    
+    namespace shapes {
+        struct Circle { ... };
+        struct Rectangle { ... };
+    }
+}
+```
+
+生成文件结构（推荐 `mod.rs` 风格）：
+
+```
+output/
+├── lib.rs              # 根模块
+│   pub mod graphics;
+│
+└── graphics/
+    ├── mod.rs          # graphics 命名空间
+    │   pub struct Point { ... }
+    │   pub struct Color { ... }
+    │   pub mod shapes;
+    │
+    └── shapes/
+        └── mod.rs      # graphics::shapes 命名空间
+            pub struct Circle { ... }
+            pub struct Rectangle { ... }
+```
+
+或使用扁平文件风格（简单项目）：
+
+```
+output/
+├── lib.rs              # 根模块
+│   pub mod graphics;
+│
+├── graphics.rs         # graphics 命名空间
+│   pub struct Point { ... }
+│   pub struct Color { ... }
+│   pub mod shapes;
+│
+└── graphics/
+    └── shapes.rs       # graphics::shapes 命名空间
+        pub struct Circle { ... }
+        pub struct Rectangle { ... }
+```
+
+#### 14.2.2 多输入文件场景
+
+**场景 A：同一命名空间在不同文件中定义**
+
+```cpp
+// math_vector.i
+namespace math {
+    struct Vector { ... };
+}
+
+// math_matrix.i
+namespace math {
+    struct Matrix { ... };
+}
+```
+
+**策略 1：合并输出（推荐）**
+
+所有同名命名空间的类型合并到一个文件：
+
+```rust
+// math.rs - 合并 math_vector.i 和 math_matrix.i 的内容
+pub struct Vector { ... }
+pub struct Matrix { ... }
+```
+
+需要 SWIG 在生成时收集所有命名空间定义，然后合并输出。
+
+**策略 2：分文件输出 + 重导出**
+
+```rust
+// math_vector.rs
+pub struct Vector { ... }
+
+// math_matrix.rs
+pub struct Matrix { ... }
+
+// math.rs - 重导出模块
+mod math_vector;
+mod math_matrix;
+
+pub use math_vector::*;
+pub use math_matrix::*;
+```
+
+**场景 B：不同命名空间在不同文件中**
+
+```cpp
+// graphics.i
+namespace graphics { ... }
+
+// audio.i
+namespace audio { ... }
+```
+
+直接生成独立模块：
+
+```
+output/
+├── lib.rs
+│   pub mod graphics;
+│   pub mod audio;
+├── graphics.rs
+└── audio.rs
+```
+
+#### 14.2.3 匿名命名空间处理
+
+C++ 匿名命名空间提供文件级私有作用域：
+
+```cpp
+namespace {
+    int internal_state;  // 仅本文件可见
+}
+```
+
+**映射策略**：生成私有模块，不对外导出
+
+```rust
+// 生成私有模块
+mod __anon__ {
+    pub static mut INTERNAL_STATE: i32 = 0;
+}
+
+// 使用时通过私有模块访问
+// 注意：Rust 没有 C++ 意义上的"文件私有"，使用 mod 私有性
+```
+
+#### 14.2.4 命名空间别名处理
+
+```cpp
+namespace A = B::C;
+A::SomeType x;  // 实际是 B::C::SomeType
+```
+
+**映射策略**：在生成代码时展开别名
+
+```rust
+// 不生成别名模块，直接使用完整路径
+use b::c::SomeType;
+
+// 或生成重导出（可选）
+pub mod a {
+    pub use super::b::c::*;
+}
+```
+
+### 14.3 实现设计
+
+#### 14.3.1 数据结构
+
+```cpp
+// 命名空间树节点
+struct NamespaceNode {
+    String *name;              // 命名空间名称
+    List *types;               // 该命名空间中的类型定义
+    List *functions;           // 该命名空间中的函数
+    Hash *children;            // 子命名空间
+    String *output_file;       // 输出文件路径
+};
+
+// 全局命名空间收集器
+NamespaceNode *global_namespace_tree;
+```
+
+#### 14.3.2 处理流程
+
+```
+Phase 1: 收集（Parse 阶段）
+───────────────────────────
+for each declaration in SWIG AST:
+    namespace = get_namespace(declaration)
+    add_to_namespace_tree(namespace, declaration)
+
+Phase 2: 生成（Emit 阶段）
+───────────────────────────
+for each namespace in tree (depth-first):
+    1. 确定输出文件路径
+    2. 生成模块声明（pub mod name;）
+    3. 生成类型/函数定义
+    4. 递归处理子命名空间
+```
+
+#### 14.3.3 命令行选项
+
+```
+-namespace                启用命名空间映射（默认）
+-namespace-flat           扁平化模式（生成前缀名，无模块）
+-namespace-output <dir>   指定模块输出目录
+-namespace-style <style>  文件风格：mod（默认）或 flat
+```
+
+### 14.4 边界情况处理
+
+#### 14.4.1 全局命名空间
+
+C++ 全局作用域映射到 Rust 根模块（`lib.rs`）：
+
+```cpp
+// 全局函数和类型
+void global_func();
+struct GlobalStruct { ... };
+```
+
+```rust
+// lib.rs
+pub fn global_func() { ... }
+pub struct GlobalStruct { ... }
+```
+
+#### 14.4.2 命名冲突
+
+不同命名空间的同名类型在 Rust 中无冲突：
+
+```cpp
+namespace A { struct Point { ... }; }
+namespace B { struct Point { ... }; }
+```
+
+```rust
+// a.rs
+pub struct Point { ... }  // a::Point
+
+// b.rs
+pub struct Point { ... }  // b::Point
+
+// 用户使用时
+use a::Point as APoint;
+use b::Point as BPoint;
+```
+
+#### 14.4.3 跨模块引用
+
+SWIG 多模块项目中，一个模块可能使用另一个模块的类型：
+
+```cpp
+// module1.i
+namespace core { struct Object { ... }; }
+
+// module2.i
+%import "module1.i"
+namespace app {
+    core::Object* create();  // 使用 module1 的类型
+}
+```
+
+**处理策略**：生成 `use` 声明引用外部模块
+
+```rust
+// module2/app.rs
+use crate::module1::core::Object;  // 引用外部模块
+
+pub fn create() -> *mut Object { ... }
+```
+
+### 14.5 与其他工具对比
+
+| 工具 | 命名空间处理 |
+|------|-------------|
+| bindgen | 生成扁平代码，使用前缀 |
+| cxx | 用户手动定义模块结构 |
+| autocxx | 类似 bindgen |
+| **SWIG-Rust** | **自动合并生成嵌套模块** |
+
+### 14.6 设计决策总结
+
+| 设计点 | 决策 |
+|--------|------|
+| 命名空间 → mod | 是，生成嵌套模块 |
+| 分散定义处理 | 合并到单一模块文件 |
+| 输出风格 | 默认 `mod.rs` 风格 |
+| 匿名命名空间 | 生成私有模块 |
+| 命名空间别名 | 展开为完整路径 |
+| 全局作用域 | 放入根模块 `lib.rs` |
+
+### 14.7 当前实现限制 (2026-04-14)
+
+#### 14.7.1 核心限制：Rust 不允许重复定义同一个 `mod`
+
+**问题描述**：
+
+C++ 允许同一个命名空间在多处定义：
+```cpp
+// 合法的 C++ 代码
+namespace math {
+    struct Vector { ... };
+}
+
+namespace math {  // 扩展 math 命名空间
+    struct Matrix { ... };
+}
+```
+
+但 Rust 不允许：
+```rust
+// 错误的 Rust 代码
+pub mod math {
+    pub struct Vector { ... }
+}
+pub mod math {  // 错误！重复定义
+    pub struct Matrix { ... }
+}
+```
+
+#### 14.7.2 当前解决方案
+
+**方案 1：使用 `-namespace` 命令行选项**
+
+将所有内容包装到一个统一的外层模块中：
+
+```bash
+swig -rust -c++ -namespace mylib -module mymodule input.i
+```
+
+生成：
+```rust
+pub mod mylib {
+    pub struct Vector { ... }
+    pub struct Matrix { ... }
+    // 所有类都在这里
+}
+```
+
+**方案 2：使用 `%rename` 添加前缀**
+
+手动避免命名冲突：
+
+```swig
+%rename(Math_Vector) math::Vector;
+%rename(Math_Matrix) math::Matrix;
+
+namespace math {
+    struct Vector { ... };
+    struct Matrix { ... };
+}
+```
+
+**方案 3：分开处理不同命名空间**
+
+每个命名空间使用独立的 SWIG 运行：
+
+```bash
+swig -rust -c++ -module math_vector math_vector.i
+swig -rust -c++ -module math_matrix math_matrix.i
+```
+
+然后在 Rust 端手动组合：
+
+```rust
+// lib.rs
+pub mod math_vector;
+pub mod math_matrix;
+
+pub use math_vector::*;
+pub use math_matrix::*;
+```
+
+#### 14.7.3 默认配置
+
+为避免生成无效 Rust 代码，`%feature("nspace")` **默认未启用**。
+
+如果用户手动启用 `%feature("nspace")`，每个类会尝试生成命名空间包装，可能导致重复 `mod` 定义错误。
+
+#### 14.7.4 未来改进方向
+
+完整的命名空间支持需要架构级改进：
+
+1. **收集阶段**：遍历 AST 收集所有命名空间及其内容
+2. **组织阶段**：构建命名空间树，合并同名命名空间
+3. **生成阶段**：每个命名空间生成一个 `pub mod` 块
+
+```cpp
+// 需要添加的数据结构
+Hash *namespace_content;  // 命名空间 -> 内容缓冲区
+Hash *opened_namespaces;  // 跟踪已打开的命名空间
+```
+
+这需要对 `emitRustFile()` 进行较大重构。
+
+---
+
+## 14. 与其他 Rust 绑定工具对比
 
 | 工具 | 生命周期处理 | Director 支持 | 函数重载 | 默认参数 | Rust 版本 |
 |------|-------------|--------------|---------|---------|----------|

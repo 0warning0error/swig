@@ -12,208 +12,621 @@ mod ffi {
     use std::os::raw::*;
 
     extern "C" {
-        pub fn Rust_outer_var_set__SWIG_0(jarg1: c_int);
+        pub fn Rust_Outer_outer_var_set__SWIG_0(jarg1: c_int);
     }
 
     extern "C" {
-        pub fn Rust_outer_var_get__SWIG_0() -> c_int;
+        pub fn Rust_Outer_outer_var_get__SWIG_0() -> c_int;
     }
 
     extern "C" {
-        pub fn Rust_outer_func__SWIG_0() -> c_int;
+        pub fn Rust_Outer_outer_func__SWIG_0() -> c_int;
     }
 
     extern "C" {
-        pub fn Rust_OuterClass_value_set__SWIG_0(jarg1: *mut c_void, jarg2: c_int);
+        pub fn Rust_Outer_OuterClass_value_set__SWIG_0(jarg1: *mut c_void, jarg2: c_int);
     }
 
     extern "C" {
-        pub fn Rust_OuterClass_value_get__SWIG_0(jarg1: *mut c_void) -> c_int;
+        pub fn Rust_Outer_OuterClass_value_get__SWIG_0(jarg1: *mut c_void) -> c_int;
     }
 
     extern "C" {
-        pub fn Rust_new_OuterClass__SWIG_0() -> *mut c_void;
+        pub fn Rust_new_Outer_OuterClass__SWIG_0() -> *mut c_void;
     }
 
     extern "C" {
-        pub fn Rust_OuterClass_method__SWIG_0(jarg1: *mut c_void) -> c_int;
+        pub fn Rust_Outer_OuterClass_method__SWIG_0(jarg1: *mut c_void) -> c_int;
     }
 
     extern "C" {
-        pub fn Rust_delete_OuterClass__SWIG_0(jarg1: *mut c_void);
+        pub fn Rust_delete_Outer_OuterClass__SWIG_0(jarg1: *mut c_void);
     }
 
     extern "C" {
-        pub fn Rust_inner_var_set__SWIG_0(jarg1: c_int);
+        pub fn Rust_Outer_Inner_inner_var_set__SWIG_0(jarg1: c_int);
     }
 
     extern "C" {
-        pub fn Rust_inner_var_get__SWIG_0() -> c_int;
+        pub fn Rust_Outer_Inner_inner_var_get__SWIG_0() -> c_int;
     }
 
     extern "C" {
-        pub fn Rust_inner_func__SWIG_0() -> c_int;
+        pub fn Rust_Outer_Inner_inner_func__SWIG_0() -> c_int;
     }
 
     extern "C" {
-        pub fn Rust_InnerClass_value_set__SWIG_0(jarg1: *mut c_void, jarg2: c_int);
+        pub fn Rust_Outer_Inner_InnerClass_value_set__SWIG_0(jarg1: *mut c_void, jarg2: c_int);
     }
 
     extern "C" {
-        pub fn Rust_InnerClass_value_get__SWIG_0(jarg1: *mut c_void) -> c_int;
+        pub fn Rust_Outer_Inner_InnerClass_value_get__SWIG_0(jarg1: *mut c_void) -> c_int;
     }
 
     extern "C" {
-        pub fn Rust_new_InnerClass__SWIG_0() -> *mut c_void;
+        pub fn Rust_new_Outer_Inner_InnerClass__SWIG_0() -> *mut c_void;
     }
 
     extern "C" {
-        pub fn Rust_InnerClass_method__SWIG_0(jarg1: *mut c_void) -> c_int;
+        pub fn Rust_Outer_Inner_InnerClass_method__SWIG_0(jarg1: *mut c_void) -> c_int;
     }
 
     extern "C" {
-        pub fn Rust_delete_InnerClass__SWIG_0(jarg1: *mut c_void);
+        pub fn Rust_delete_Outer_Inner_InnerClass__SWIG_0(jarg1: *mut c_void);
+    }
+
+    extern "C" {
+        pub fn Rust_MYTEST_MyClass_value_set__SWIG_0(jarg1: *mut c_void, jarg2: c_int);
+    }
+
+    extern "C" {
+        pub fn Rust_MYTEST_MyClass_value_get__SWIG_0(jarg1: *mut c_void) -> c_int;
+    }
+
+    extern "C" {
+        pub fn Rust_new_MYTEST_MyClass__SWIG_0() -> *mut c_void;
+    }
+
+    extern "C" {
+        pub fn Rust_MYTEST_MyClass_method__SWIG_0(jarg1: *mut c_void) -> c_int;
+    }
+
+    extern "C" {
+        pub fn Rust_delete_MYTEST_MyClass__SWIG_0(jarg1: *mut c_void);
+    }
+
+    extern "C" {
+        pub fn Rust_MY_my_global_check_status__SWIG_0(jarg1: c_int) -> c_int;
+    }
+
+    extern "C" {
+        pub fn Rust_MY_MyClass_value_set__SWIG_0(jarg1: *mut c_void, jarg2: c_int);
+    }
+
+    extern "C" {
+        pub fn Rust_MY_MyClass_value_get__SWIG_0(jarg1: *mut c_void) -> c_int;
+    }
+
+    extern "C" {
+        pub fn Rust_new_MY_MyClass__SWIG_0() -> *mut c_void;
+    }
+
+    extern "C" {
+        pub fn Rust_MY_MyClass_method__SWIG_0(jarg1: *mut c_void) -> c_int;
+    }
+
+    extern "C" {
+        pub fn Rust_delete_MY_MyClass__SWIG_0(jarg1: *mut c_void);
+    }
+
+    extern "C" {
+        pub fn Rust_MY_MyStruct_x_set__SWIG_0(jarg1: *mut c_void, jarg2: c_int);
+    }
+
+    extern "C" {
+        pub fn Rust_MY_MyStruct_x_get__SWIG_0(jarg1: *mut c_void) -> c_int;
+    }
+
+    extern "C" {
+        pub fn Rust_MY_MyStruct_y_set__SWIG_0(jarg1: *mut c_void, jarg2: c_int);
+    }
+
+    extern "C" {
+        pub fn Rust_MY_MyStruct_y_get__SWIG_0(jarg1: *mut c_void) -> c_int;
+    }
+
+    extern "C" {
+        pub fn Rust_new_MY_MyStruct__SWIG_0() -> *mut c_void;
+    }
+
+    extern "C" {
+        pub fn Rust_delete_MY_MyStruct__SWIG_0(jarg1: *mut c_void);
+    }
+
+    extern "C" {
+        pub fn Rust_MY_MyUnion_int_val_set__SWIG_0(jarg1: *mut c_void, jarg2: c_int);
+    }
+
+    extern "C" {
+        pub fn Rust_MY_MyUnion_int_val_get__SWIG_0(jarg1: *mut c_void) -> c_int;
+    }
+
+    extern "C" {
+        pub fn Rust_MY_MyUnion_float_val_set__SWIG_0(jarg1: *mut c_void, jarg2: c_float);
+    }
+
+    extern "C" {
+        pub fn Rust_MY_MyUnion_float_val_get__SWIG_0(jarg1: *mut c_void) -> c_float;
+    }
+
+    extern "C" {
+        pub fn Rust_new_MY_MyUnion__SWIG_0() -> *mut c_void;
+    }
+
+    extern "C" {
+        pub fn Rust_delete_MY_MyUnion__SWIG_0(jarg1: *mut c_void);
     }
 
 }
 
 use std::os::raw::*;
 
+/// Wrapper for C++ std::string
+/// 
+/// This type provides bidirectional conversion between C++ std::string
+/// and Rust's String type. Use `.into()` to convert to String.
+pub struct SwigString {
+    ptr: *mut c_void,
+}
+
+impl SwigString {
+    /// Create a new SwigString from a Rust String
+    pub fn new(s: &str) -> Self {
+        // Note: This requires FFI support - placeholder implementation
+        // In practice, this will be called from generated code
+        SwigString { ptr: std::ptr::null_mut() }
+    }
+    
+    /// Convert to Rust String (takes ownership)
+    pub fn into_string(self) -> String {
+        // The actual conversion is done in generated method wrappers
+        // which use CStr::from_ptr to convert C strings
+        String::new()
+    }
+}
+
+impl Drop for SwigString {
+    fn drop(&mut self) {
+        // C++ std::string destructor is called via FFI
+        // This is handled by the generated wrapper code
+    }
+}
+
+impl From<SwigString> for String {
+    fn from(s: SwigString) -> String {
+        s.into_string()
+    }
+}
+
+impl std::fmt::Display for SwigString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SwigString(...)")
+    }
+}
+
+impl std::fmt::Debug for SwigString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SwigString {{ ptr: {:?} }}", self.ptr)
+    }
+}
+
 // Safe wrapper functions
 
-pub fn outer_var_set_int(Outer::outer_var: i32) {
-    unsafe { ffi::Rust_outer_var_set__SWIG_0(Outer::outer_var) }
-}
+pub mod Outer {
+    use std::os::raw::*;
+    use super::ffi;
 
-pub fn outer_var_get() -> i32 {
-    unsafe { ffi::Rust_outer_var_get__SWIG_0() }
-}
-
-pub fn outer_func() -> i32 {
-    unsafe { ffi::Rust_outer_func__SWIG_0() }
-}
-
-/// Rust wrapper for C++ class OuterClass
-/// Holds a pointer to the underlying C++ object.
-pub struct OuterClass {
-    /// Pointer to the C++ object
-    ptr: *mut c_void,
-}
-
-/// Trait defining the interface for C++ class OuterClass
-pub trait OuterClassTrait {
-    fn method(&mut self) -> i32;
-}
-
-impl OuterClass {
-    pub fn set_value(&self, value: i32) {
-        unsafe { ffi::Rust_OuterClass_value_set__SWIG_0(self.ptr, value) }
+    pub fn outer_var_set_int(Outer_outer_var: i32) {
+        unsafe { ffi::Rust_Outer_outer_var_set__SWIG_0(Outer_outer_var) }
     }
-}
-
-impl OuterClass {
-    pub fn value(&self) -> i32 {
-        unsafe { ffi::Rust_OuterClass_value_get__SWIG_0(self.ptr) }
+    
+    pub fn outer_var_get() -> i32 {
+        unsafe { ffi::Rust_Outer_outer_var_get__SWIG_0() }
     }
-}
-
-impl OuterClass {
-    pub fn new() -> Self {
-        Self {
-            ptr: unsafe { ffi::Rust_new_OuterClass__SWIG_0() },
+    
+    pub fn outer_func() -> i32 {
+        unsafe { ffi::Rust_Outer_outer_func__SWIG_0() }
+    }
+    
+    /// Rust wrapper for C++ class OuterClass
+    /// Holds a pointer to the underlying C++ object.
+    pub struct OuterClass {
+        /// Pointer to the C++ object
+        ptr: *mut c_void,
+    }
+    
+    /// Trait defining the interface for C++ class OuterClass
+    pub trait OuterClassTrait {
+        fn method(&mut self) -> i32;
+    }
+    
+    impl OuterClass {
+        pub fn Outer_OuterClass_value_set(&self, value: i32) {
+            unsafe { ffi::Rust_Outer_OuterClass_value_set__SWIG_0(self.ptr, value) }
         }
     }
-}
-
-impl Drop for OuterClass {
-    fn drop(&mut self) {
-        unsafe { ffi::Rust_delete_OuterClass__SWIG_0(self.ptr) }
-    }
-}
-
-impl OuterClass {
-    /// Get the underlying C++ pointer (read-only)
-    pub fn ptr(&self) -> *const c_void {
-        self.ptr as *const c_void
-    }
-
-    /// Get the underlying C++ pointer (mutable)
-    pub fn ptr_mut(&mut self) -> *mut c_void {
-        self.ptr
-    }
-}
-
-impl OuterClassTrait for OuterClass {
-    fn method(&mut self) -> i32 {
-        unsafe { ffi::Rust_OuterClass_method__SWIG_0(self.ptr) }
-    }
-}
-
-pub fn inner_var_set_int(Outer::Inner::inner_var: i32) {
-    unsafe { ffi::Rust_inner_var_set__SWIG_0(Outer::Inner::inner_var) }
-}
-
-pub fn inner_var_get() -> i32 {
-    unsafe { ffi::Rust_inner_var_get__SWIG_0() }
-}
-
-pub fn inner_func() -> i32 {
-    unsafe { ffi::Rust_inner_func__SWIG_0() }
-}
-
-/// Rust wrapper for C++ class InnerClass
-/// Holds a pointer to the underlying C++ object.
-pub struct InnerClass {
-    /// Pointer to the C++ object
-    ptr: *mut c_void,
-}
-
-/// Trait defining the interface for C++ class InnerClass
-pub trait InnerClassTrait {
-    fn method(&mut self) -> i32;
-}
-
-impl InnerClass {
-    pub fn set_value(&self, value: i32) {
-        unsafe { ffi::Rust_InnerClass_value_set__SWIG_0(self.ptr, value) }
-    }
-}
-
-impl InnerClass {
-    pub fn value(&self) -> i32 {
-        unsafe { ffi::Rust_InnerClass_value_get__SWIG_0(self.ptr) }
-    }
-}
-
-impl InnerClass {
-    pub fn new() -> Self {
-        Self {
-            ptr: unsafe { ffi::Rust_new_InnerClass__SWIG_0() },
+    
+    impl OuterClass {
+        pub fn Outer_OuterClass_value_get(&self) -> i32 {
+            unsafe { ffi::Rust_Outer_OuterClass_value_get__SWIG_0(self.ptr) }
         }
     }
-}
+    
+    impl OuterClass {
+        pub fn new() -> Self {
+            Self {
+                ptr: unsafe { ffi::Rust_new_Outer_OuterClass__SWIG_0() },
+            }
+        }
+    }
+    
+    impl Drop for OuterClass {
+        fn drop(&mut self) {
+            unsafe { ffi::Rust_delete_Outer_OuterClass__SWIG_0(self.ptr) }
+        }
+    }
+    
+    impl OuterClass {
+        /// Get the underlying C++ pointer (read-only)
+        pub fn ptr(&self) -> *const c_void {
+            self.ptr as *const c_void
+        }
+    
+        /// Get the underlying C++ pointer (mutable)
+        pub fn ptr_mut(&mut self) -> *mut c_void {
+            self.ptr
+        }
+    }
+    
+    impl OuterClassTrait for OuterClass {
+        fn method(&mut self) -> i32 {
+            unsafe { ffi::Rust_Outer_OuterClass_method__SWIG_0(self.ptr) }
+        }
+    }
+    
+    pub mod Inner {
+        use std::os::raw::*;
+        use super::super::ffi;
 
-impl Drop for InnerClass {
-    fn drop(&mut self) {
-        unsafe { ffi::Rust_delete_InnerClass__SWIG_0(self.ptr) }
+        pub fn inner_var_set_int(Outer_Inner_inner_var: i32) {
+            unsafe { ffi::Rust_Outer_Inner_inner_var_set__SWIG_0(Outer_Inner_inner_var) }
+        }
+        
+        pub fn inner_var_get() -> i32 {
+            unsafe { ffi::Rust_Outer_Inner_inner_var_get__SWIG_0() }
+        }
+        
+        pub fn inner_func() -> i32 {
+            unsafe { ffi::Rust_Outer_Inner_inner_func__SWIG_0() }
+        }
+        
+        /// Rust wrapper for C++ class InnerClass
+        /// Holds a pointer to the underlying C++ object.
+        pub struct InnerClass {
+            /// Pointer to the C++ object
+            ptr: *mut c_void,
+        }
+        
+        /// Trait defining the interface for C++ class InnerClass
+        pub trait InnerClassTrait {
+            fn method(&mut self) -> i32;
+        }
+        
+        impl InnerClass {
+            pub fn Outer_Inner_InnerClass_value_set(&self, value: i32) {
+                unsafe { ffi::Rust_Outer_Inner_InnerClass_value_set__SWIG_0(self.ptr, value) }
+            }
+        }
+        
+        impl InnerClass {
+            pub fn Outer_Inner_InnerClass_value_get(&self) -> i32 {
+                unsafe { ffi::Rust_Outer_Inner_InnerClass_value_get__SWIG_0(self.ptr) }
+            }
+        }
+        
+        impl InnerClass {
+            pub fn new() -> Self {
+                Self {
+                    ptr: unsafe { ffi::Rust_new_Outer_Inner_InnerClass__SWIG_0() },
+                }
+            }
+        }
+        
+        impl Drop for InnerClass {
+            fn drop(&mut self) {
+                unsafe { ffi::Rust_delete_Outer_Inner_InnerClass__SWIG_0(self.ptr) }
+            }
+        }
+        
+        impl InnerClass {
+            /// Get the underlying C++ pointer (read-only)
+            pub fn ptr(&self) -> *const c_void {
+                self.ptr as *const c_void
+            }
+        
+            /// Get the underlying C++ pointer (mutable)
+            pub fn ptr_mut(&mut self) -> *mut c_void {
+                self.ptr
+            }
+        }
+        
+        impl InnerClassTrait for InnerClass {
+            fn method(&mut self) -> i32 {
+                unsafe { ffi::Rust_Outer_Inner_InnerClass_method__SWIG_0(self.ptr) }
+            }
+        }
+        
     }
 }
+pub mod MY {
+    use std::os::raw::*;
+    use super::ffi;
 
-impl InnerClass {
-    /// Get the underlying C++ pointer (read-only)
-    pub fn ptr(&self) -> *const c_void {
-        self.ptr as *const c_void
+    pub fn my_global_check_status_int(code: i32) -> i32 {
+        unsafe { ffi::Rust_MY_my_global_check_status__SWIG_0(code) }
     }
-
-    /// Get the underlying C++ pointer (mutable)
-    pub fn ptr_mut(&mut self) -> *mut c_void {
-        self.ptr
+    
+    /// Rust wrapper for C++ class MyClass
+    /// Holds a pointer to the underlying C++ object.
+    pub struct MyClass {
+        /// Pointer to the C++ object
+        ptr: *mut c_void,
     }
+    
+    /// Trait defining the interface for C++ class MyClass
+    pub trait MyClassTrait {
+        fn method(&mut self) -> i32;
+    }
+    
+    impl MyClass {
+        pub fn MY_MyClass_value_set(&self, value: i32) {
+            unsafe { ffi::Rust_MY_MyClass_value_set__SWIG_0(self.ptr, value) }
+        }
+    }
+    
+    impl MyClass {
+        pub fn MY_MyClass_value_get(&self) -> i32 {
+            unsafe { ffi::Rust_MY_MyClass_value_get__SWIG_0(self.ptr) }
+        }
+    }
+    
+    impl MyClass {
+        pub fn new() -> Self {
+            Self {
+                ptr: unsafe { ffi::Rust_new_MY_MyClass__SWIG_0() },
+            }
+        }
+    }
+    
+    impl Drop for MyClass {
+        fn drop(&mut self) {
+            unsafe { ffi::Rust_delete_MY_MyClass__SWIG_0(self.ptr) }
+        }
+    }
+    
+    impl MyClass {
+        /// Get the underlying C++ pointer (read-only)
+        pub fn ptr(&self) -> *const c_void {
+            self.ptr as *const c_void
+        }
+    
+        /// Get the underlying C++ pointer (mutable)
+        pub fn ptr_mut(&mut self) -> *mut c_void {
+            self.ptr
+        }
+    }
+    
+    impl MyClassTrait for MyClass {
+        fn method(&mut self) -> i32 {
+            unsafe { ffi::Rust_MY_MyClass_method__SWIG_0(self.ptr) }
+        }
+    }
+    
+    /// Rust wrapper for C++ class MyStruct
+    /// Holds a pointer to the underlying C++ object.
+    pub struct MyStruct {
+        /// Pointer to the C++ object
+        ptr: *mut c_void,
+    }
+    
+    /// Trait defining the interface for C++ class MyStruct
+    pub trait MyStructTrait {
+    }
+    
+    impl MyStruct {
+        pub fn MY_MyStruct_x_set(&self, x: i32) {
+            unsafe { ffi::Rust_MY_MyStruct_x_set__SWIG_0(self.ptr, x) }
+        }
+    }
+    
+    impl MyStruct {
+        pub fn MY_MyStruct_x_get(&self) -> i32 {
+            unsafe { ffi::Rust_MY_MyStruct_x_get__SWIG_0(self.ptr) }
+        }
+    }
+    
+    impl MyStruct {
+        pub fn MY_MyStruct_y_set(&self, y: i32) {
+            unsafe { ffi::Rust_MY_MyStruct_y_set__SWIG_0(self.ptr, y) }
+        }
+    }
+    
+    impl MyStruct {
+        pub fn MY_MyStruct_y_get(&self) -> i32 {
+            unsafe { ffi::Rust_MY_MyStruct_y_get__SWIG_0(self.ptr) }
+        }
+    }
+    
+    impl MyStruct {
+        pub fn new() -> Self {
+            Self {
+                ptr: unsafe { ffi::Rust_new_MY_MyStruct__SWIG_0() },
+            }
+        }
+    }
+    
+    impl Drop for MyStruct {
+        fn drop(&mut self) {
+            unsafe { ffi::Rust_delete_MY_MyStruct__SWIG_0(self.ptr) }
+        }
+    }
+    
+    impl MyStruct {
+        /// Get the underlying C++ pointer (read-only)
+        pub fn ptr(&self) -> *const c_void {
+            self.ptr as *const c_void
+        }
+    
+        /// Get the underlying C++ pointer (mutable)
+        pub fn ptr_mut(&mut self) -> *mut c_void {
+            self.ptr
+        }
+    }
+    
+    impl MyStructTrait for MyStruct {
+    }
+    
+    #[repr(C)]
+    #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+    pub enum MyEnum {
+        MyEnum_Value1,
+        MyEnum_Value2,
+        MyEnum_Value3,
+    }
+    
+    /// Rust wrapper for C++ class MyUnion
+    /// Holds a pointer to the underlying C++ object.
+    pub struct MyUnion {
+        /// Pointer to the C++ object
+        ptr: *mut c_void,
+    }
+    
+    /// Trait defining the interface for C++ class MyUnion
+    pub trait MyUnionTrait {
+    }
+    
+    impl MyUnion {
+        pub fn MY_MyUnion_int_val_set(&self, int_val: i32) {
+            unsafe { ffi::Rust_MY_MyUnion_int_val_set__SWIG_0(self.ptr, int_val) }
+        }
+    }
+    
+    impl MyUnion {
+        pub fn MY_MyUnion_int_val_get(&self) -> i32 {
+            unsafe { ffi::Rust_MY_MyUnion_int_val_get__SWIG_0(self.ptr) }
+        }
+    }
+    
+    impl MyUnion {
+        pub fn MY_MyUnion_float_val_set(&self, float_val: f32) {
+            unsafe { ffi::Rust_MY_MyUnion_float_val_set__SWIG_0(self.ptr, float_val) }
+        }
+    }
+    
+    impl MyUnion {
+        pub fn MY_MyUnion_float_val_get(&self) -> f32 {
+            unsafe { ffi::Rust_MY_MyUnion_float_val_get__SWIG_0(self.ptr) }
+        }
+    }
+    
+    impl MyUnion {
+        pub fn new() -> Self {
+            Self {
+                ptr: unsafe { ffi::Rust_new_MY_MyUnion__SWIG_0() },
+            }
+        }
+    }
+    
+    impl Drop for MyUnion {
+        fn drop(&mut self) {
+            unsafe { ffi::Rust_delete_MY_MyUnion__SWIG_0(self.ptr) }
+        }
+    }
+    
+    impl MyUnion {
+        /// Get the underlying C++ pointer (read-only)
+        pub fn ptr(&self) -> *const c_void {
+            self.ptr as *const c_void
+        }
+    
+        /// Get the underlying C++ pointer (mutable)
+        pub fn ptr_mut(&mut self) -> *mut c_void {
+            self.ptr
+        }
+    }
+    
+    impl MyUnionTrait for MyUnion {
+    }
+    
 }
+pub mod MYTEST {
+    use std::os::raw::*;
+    use super::ffi;
 
-impl InnerClassTrait for InnerClass {
-    fn method(&mut self) -> i32 {
-        unsafe { ffi::Rust_InnerClass_method__SWIG_0(self.ptr) }
+    /// Rust wrapper for C++ class MyClass
+    /// Holds a pointer to the underlying C++ object.
+    pub struct MyClass {
+        /// Pointer to the C++ object
+        ptr: *mut c_void,
     }
+    
+    /// Trait defining the interface for C++ class MyClass
+    pub trait MyClassTrait {
+        fn method(&mut self) -> i32;
+    }
+    
+    impl MyClass {
+        pub fn MYTEST_MyClass_value_set(&self, value: i32) {
+            unsafe { ffi::Rust_MYTEST_MyClass_value_set__SWIG_0(self.ptr, value) }
+        }
+    }
+    
+    impl MyClass {
+        pub fn MYTEST_MyClass_value_get(&self) -> i32 {
+            unsafe { ffi::Rust_MYTEST_MyClass_value_get__SWIG_0(self.ptr) }
+        }
+    }
+    
+    impl MyClass {
+        pub fn new() -> Self {
+            Self {
+                ptr: unsafe { ffi::Rust_new_MYTEST_MyClass__SWIG_0() },
+            }
+        }
+    }
+    
+    impl Drop for MyClass {
+        fn drop(&mut self) {
+            unsafe { ffi::Rust_delete_MYTEST_MyClass__SWIG_0(self.ptr) }
+        }
+    }
+    
+    impl MyClass {
+        /// Get the underlying C++ pointer (read-only)
+        pub fn ptr(&self) -> *const c_void {
+            self.ptr as *const c_void
+        }
+    
+        /// Get the underlying C++ pointer (mutable)
+        pub fn ptr_mut(&mut self) -> *mut c_void {
+            self.ptr
+        }
+    }
+    
+    impl MyClassTrait for MyClass {
+        fn method(&mut self) -> i32 {
+            unsafe { ffi::Rust_MYTEST_MyClass_method__SWIG_0(self.ptr) }
+        }
+    }
+    
 }
-

@@ -15,6 +15,7 @@
 #include "cparse.h"
 #include <ctype.h>
 #include <cstdio>
+#include <cstring>
 
 static const char *usage = "\
 Rust Options (available with -rust)\n\
@@ -85,7 +86,11 @@ public:
     filenames_list(NULL),
     class_method_names(NULL),
     generated_ffi_names(NULL),
-    generated_wrapper_names(NULL) {
+    generated_wrapper_names(NULL),
+    nspace_wrapper_content(NULL),
+    nspace_ffi_content(NULL),
+    current_nspace_buffer(NULL),
+    current_ffi_buffer(NULL) {
     /* For now, multiple inheritance in directors is disabled.
        This should be easy to implement though. */
     director_multiple_inheritance = 0;
@@ -262,6 +267,11 @@ public:
     filenames_list = NewList();
     generated_ffi_names = NewHash();     // For FFI declaration deduplication
     generated_wrapper_names = NewHash(); // For wrapper function deduplication
+    
+    // Initialize namespace content collection for proper Rust mod generation
+    // Rust requires all content in a mod to be defined together
+    nspace_wrapper_content = NewHash();  // nspace -> wrapper code buffer
+    nspace_ffi_content = NewHash();      // nspace -> FFI declarations buffer
 
     // Set module and crate names
     if (!module_name) {
@@ -715,6 +725,9 @@ public:
    * Process a class definition.
    * Handles inheritance by detecting base classes.
    * Supports namespaces (sym:nspace) mapped to Rust mod.
+   * 
+   * Note: In Rust, a module can only be defined once. We collect namespace content
+   * and organize it at the end, rather than opening/closing mod for each class.
    * ----------------------------------------------------------------------------- */
   virtual int classHandler(Node *n) {
     class_name = Getattr(n, "sym:name");
@@ -728,8 +741,21 @@ public:
     String *old_nspace = current_nspace;
     current_nspace = Getattr(n, "sym:nspace");
 
-    // Open namespace mod if needed
-    addOpenMod(current_nspace, f_wrapper_code);
+    // Save original wrapper output buffer and redirect to temporary buffer
+    // This allows us to collect wrapper content per namespace
+    // Note: FFI declarations go to global f_ffi_code, not per namespace
+    File *old_f_wrapper_code = f_wrapper_code;
+    
+    // Create temporary buffer for this class's wrapper content
+    // In SWIG, String can be used directly as output target for Printf
+    String *temp_wrapper = NewString("");
+    f_wrapper_code = temp_wrapper;  // Use String directly as File
+    // f_ffi_code remains unchanged - FFI declarations go to global module
+    
+    // Note: We don't open namespace mod here because Rust doesn't allow
+    // the same module to be defined multiple times. Namespace organization
+    // is handled at a higher level (see emitRustFile).
+    // Classes in the same namespace will be collected together.
 
     // Handle inheritance - find base class
     baseclass = NULL;
@@ -791,8 +817,21 @@ public:
       emitUpcasts(n, baselist);
     }
 
-    // Close namespace mod if needed
-    addCloseMod(current_nspace, f_wrapper_code);
+    // Append collected wrapper content to namespace buffer
+    if (nspace_wrapper_content && temp_wrapper && Len(temp_wrapper) > 0) {
+      String *nspace_buf = getNSpaceWrapperBuffer(current_nspace);
+      Append(nspace_buf, temp_wrapper);
+    }
+    // Note: FFI declarations are already in global f_ffi_code
+    
+    // Delete temporary buffer
+    Delete(temp_wrapper);
+    
+    // Restore original output buffer
+    f_wrapper_code = old_f_wrapper_code;
+
+    // Note: We don't close namespace mod here. See comment at the beginning of this function.
+    // Namespace organization is handled at a higher level.
 
     class_name = NULL;
     class_node = NULL;
@@ -932,6 +971,11 @@ public:
     String *name = Getattr(n, "sym:name");
     String *nspace = Getattr(n, "sym:nspace");
     
+    // Save original output buffers and redirect to temporary buffers
+    File *old_f_wrapper_code = f_wrapper_code;
+    String *temp_wrapper = NewString("");
+    f_wrapper_code = temp_wrapper;  // Use String directly as File
+    
     // Check if this is a class-scoped enum
     Node *current_class = getCurrentClass();
     String *class_prefix = NULL;
@@ -952,9 +996,6 @@ public:
           String *vname = Getattr(child, "sym:name");
           String *value = Getattr(child, "enumvalue");
           if (vname) {
-            // Open namespace mod if needed
-            addOpenMod(nspace, f_wrapper_code);
-            
             // Use explicit value if provided, otherwise use auto-increment
             if (value && Len(value) > 0) {
               Printf(f_wrapper_code, "pub const %s: i32 = %s;\n", vname, value);
@@ -962,13 +1003,20 @@ public:
               Printf(f_wrapper_code, "pub const %s: i32 = %d;\n", vname, anon_value);
             }
             anon_value++;
-            
-            // Close namespace mod if needed
-            addCloseMod(nspace, f_wrapper_code);
           }
         }
       }
-      // Don't call Language::enumDeclaration for same reason as regular enums
+      
+      // Append to namespace buffer
+      if (nspace_wrapper_content && temp_wrapper && Len(temp_wrapper) > 0) {
+        String *nspace_buf = getNSpaceWrapperBuffer(nspace);
+        Append(nspace_buf, temp_wrapper);
+      }
+      
+      // Cleanup
+      Delete(f_wrapper_code);
+      Delete(temp_wrapper);
+      f_wrapper_code = old_f_wrapper_code;
       if (class_prefix) Delete(class_prefix);
       return SWIG_OK;
     }
@@ -984,7 +1032,9 @@ public:
     
     // Skip empty enums
     if (value_count == 0) {
-      // Don't call Language::enumDeclaration for same reason
+      // Cleanup
+      Delete(temp_wrapper);
+      f_wrapper_code = old_f_wrapper_code;
       if (class_prefix) Delete(class_prefix);
       return SWIG_OK;
     }
@@ -1000,9 +1050,6 @@ public:
     
     // Store the generated Rust enum name for later use in type references
     Setattr(n, "rust:enumname", enum_name);
-    
-    // Open namespace mod if needed
-    addOpenMod(nspace, f_wrapper_code);
     
     // Generate Rust enum
     Printf(f_wrapper_code, "#[repr(C)]\n");
@@ -1027,8 +1074,11 @@ public:
     
     Printf(f_wrapper_code, "}\n\n");
     
-    // Close namespace mod if needed
-    addCloseMod(nspace, f_wrapper_code);
+    // Append to namespace buffer
+    if (nspace_wrapper_content && temp_wrapper && Len(temp_wrapper) > 0) {
+      String *nspace_buf = getNSpaceWrapperBuffer(nspace);
+      Append(nspace_buf, temp_wrapper);
+    }
     
     // Note: We don't call Language::enumDeclaration(n) here because:
     // 1. We already handled enum values in the Rust enum above
@@ -1039,6 +1089,8 @@ public:
     // we can selectively call specific base class methods.
     
     // Cleanup
+    Delete(temp_wrapper);
+    f_wrapper_code = old_f_wrapper_code;
     Delete(enum_name);
     if (class_prefix) Delete(class_prefix);
     
@@ -1071,16 +1123,63 @@ private:
    * getOverloadedName()
    * 
    * Get a unique name for overloaded functions.
+   * For global functions in a namespace, include the namespace prefix.
    * ----------------------------------------------------------------------------- */
   String *getOverloadedName(Node *n) {
     String *symname = Getattr(n, "sym:name");
     String *overname = Getattr(n, "sym:overname");
+    String *nspace = Getattr(n, "sym:nspace");
     
-    if (overname) {
-      return NewStringf("%s%s", symname, overname);
-    } else {
-      return Copy(symname);
+    String *result;
+    
+    // For global functions (not member functions), include namespace prefix
+    bool is_member = GetFlag(n, "ismember");
+    
+    // Try to get namespace from parentNode's symtab if not set directly
+    // This is needed because %feature("nspace") only works for classes/enums,
+    // not for global functions in namespaces
+    if (!nspace && !is_member) {
+      Node *parent = Getattr(n, "parentNode");
+      if (parent) {
+        // Try to get namespace from parent's symbol table
+        String *parent_nspace = Getattr(parent, "sym:nspace");
+        if (parent_nspace) {
+          nspace = parent_nspace;
+        } else {
+          // Try to get from symtab's qualified name
+          Symtab *symtab = Getattr(parent, "symtab");
+          if (symtab) {
+            String *qname = Swig_symbol_qualified_language_scopename(symtab);
+            if (qname && Len(qname) > 0) {
+              nspace = qname;
+            }
+          }
+        }
+      }
     }
+    
+    if (nspace && !is_member) {
+      // Global function in a namespace - include namespace prefix
+      // Replace dots with underscores for the namespace
+      String *nspace_underscore = Copy(nspace);
+      Replaceall(nspace_underscore, ".", "_");
+      
+      if (overname) {
+        result = NewStringf("%s_%s%s", nspace_underscore, symname, overname);
+      } else {
+        result = NewStringf("%s_%s", nspace_underscore, symname);
+      }
+      Delete(nspace_underscore);
+    } else {
+      // Member function or global function without namespace
+      if (overname) {
+        result = NewStringf("%s%s", symname, overname);
+      } else {
+        result = Copy(symname);
+      }
+    }
+    
+    return result;
   }
 
   /* ----------------------------------------------------------------------------- 
@@ -1387,17 +1486,24 @@ private:
    * addOpenMod()
    * 
    * Generate opening of Rust mod for namespace support.
+   * Handles nested namespaces like "Outer.Inner" -> pub mod Outer { pub mod Inner {
    * ----------------------------------------------------------------------------- */
   void addOpenMod(const String *nspace, File *file) {
-    if (namespce || nspace) {
-      if (namespce) {
-        Printf(file, "pub mod %s {\n", namespce);
-        if (nspace) {
-          Printf(file, "pub mod %s {\n", nspace);
-        }
-      } else if (nspace) {
-        Printf(file, "pub mod %s {\n", nspace);
+    // First, handle -namespace option if set
+    if (namespce) {
+      Printf(file, "pub mod %s {\n", namespce);
+    }
+    
+    // Then handle sym:nspace (may contain nested namespaces separated by .)
+    if (nspace) {
+      // Split the namespace by . and generate nested mod declarations
+      String *nspace_copy = Copy(nspace);
+      char *token = strtok(Char(nspace_copy), ".");
+      while (token != NULL) {
+        Printf(file, "pub mod %s {\n", token);
+        token = strtok(NULL, ".");
       }
+      Delete(nspace_copy);
     }
   }
 
@@ -1405,17 +1511,32 @@ private:
    * addCloseMod()
    * 
    * Generate closing of Rust mod for namespace support.
+   * Handles nested namespaces like "Outer.Inner" -> } }
    * ----------------------------------------------------------------------------- */
   void addCloseMod(const String *nspace, File *file) {
-    if (namespce || nspace) {
-      if (namespce) {
-        if (nspace) {
-          Printf(file, "}\n");
-        }
-        Printf(file, "}\n");
-      } else if (nspace) {
-        Printf(file, "}\n");
+    // Count the nesting depth
+    int depth = 0;
+    
+    // -namespace option adds one level
+    if (namespce) {
+      depth++;
+    }
+    
+    // Count dots in nspace to determine nesting
+    if (nspace) {
+      String *nspace_copy = Copy(nspace);
+      char *p = Char(nspace_copy);
+      depth++;  // At least one level
+      while (*p) {
+        if (*p == '.') depth++;
+        p++;
       }
+      Delete(nspace_copy);
+    }
+    
+    // Close that many braces
+    for (int i = 0; i < depth; i++) {
+      Printf(file, "}\n");
     }
   }
 
@@ -1691,6 +1812,45 @@ private:
   }
 
   /* ----------------------------------------------------------------------------- 
+   * getNSpaceWrapperBuffer()
+   * 
+   * Get or create the wrapper code buffer for a namespace.
+   * This is used to collect all wrapper code for a namespace before outputting.
+   * ----------------------------------------------------------------------------- */
+  String *getNSpaceWrapperBuffer(const String *nspace) {
+    // Use empty string as key for global namespace
+    String *key = nspace ? Copy(nspace) : NewString("");
+    
+    String *buf = Getattr(nspace_wrapper_content, key);
+    if (!buf) {
+      buf = NewString("");
+      Setattr(nspace_wrapper_content, key, buf);
+    }
+    
+    Delete(key);  // Clean up the key
+    return buf;
+  }
+
+  /* ----------------------------------------------------------------------------- 
+   * getNSpaceFFIBuffer()
+   * 
+   * Get or create the FFI declarations buffer for a namespace.
+   * ----------------------------------------------------------------------------- */
+  String *getNSpaceFFIBuffer(const String *nspace) {
+    // Use empty string as key for global namespace
+    String *key = nspace ? Copy(nspace) : NewString("");
+    
+    String *buf = Getattr(nspace_ffi_content, key);
+    if (!buf) {
+      buf = NewString("");
+      Setattr(nspace_ffi_content, key, buf);
+    }
+    
+    Delete(key);
+    return buf;
+  }
+
+  /* ----------------------------------------------------------------------------- 
    * outputDirectory()
    * 
    * Return the directory to use for generating Rust files.
@@ -1827,10 +1987,138 @@ private:
       
       Printf(f_rust, "// Safe wrapper functions\n\n");
       Dump(f_wrapper_code, f_rust);
+      
+      // Output namespace-specific content with proper mod wrapping
+      // Rust requires all content in a mod to be defined together
+      // We need to build a namespace tree to avoid duplicate mod definitions
+      if (nspace_wrapper_content) {
+        // Build namespace tree for proper merging
+        // Key: namespace name, Value: Hash with "content" and "children"
+        Hash *nspace_tree = NewHash();
+        
+        for (Iterator it = First(nspace_wrapper_content); it.key; it = Next(it)) {
+          String *nspace = it.key;
+          String *content = it.item;
+          
+          // Skip empty content
+          if (!content || Len(content) == 0) continue;
+          
+          // Check if this is global namespace (empty key)
+          bool is_global_nspace = (!nspace || Len(nspace) == 0);
+          
+          if (is_global_nspace) {
+            // Global namespace content - output directly without mod wrapper
+            Printv(f_rust, content, NIL);
+          } else {
+            // Add to namespace tree
+            // Split namespace by "." and build tree
+            String *nspace_copy = Copy(nspace);
+            char *token = strtok(Char(nspace_copy), ".");
+            Hash *current = nspace_tree;
+            
+            while (token != NULL) {
+              String *token_str = NewString(token);
+              Hash *child = Getattr(current, token_str);
+              if (!child) {
+                child = NewHash();
+                Setattr(current, token_str, child);
+              }
+              current = child;
+              token = strtok(NULL, ".");
+              Delete(token_str);
+            }
+            
+            // Store content at this node
+            String *existing_content = Getattr(current, "content");
+            if (existing_content) {
+              Append(existing_content, content);
+            } else {
+              Setattr(current, "content", Copy(content));
+            }
+            
+            Delete(nspace_copy);
+          }
+        }
+        
+        // Output namespace tree
+        outputNamespaceTree(nspace_tree, f_rust, 0);
+        
+        Delete(nspace_tree);
+      }
     }
 
     Delete(f_rust);
     Delete(rust_filename);
+  }
+  
+  /* ----------------------------------------------------------------------------- 
+   * outputNamespaceTree()
+   * 
+   * Recursively output namespace tree, ensuring each namespace is only opened once.
+   * ----------------------------------------------------------------------------- */
+  void outputNamespaceTree(Hash *tree, File *output, int depth) {
+    for (Iterator it = First(tree); it.key; it = Next(it)) {
+      String *name = it.key;
+      Hash *node = it.item;
+      
+      // Skip special "content" key
+      if (Cmp(name, "content") == 0) continue;
+      
+      // Output this namespace level
+      for (int i = 0; i < depth; i++) {
+        Printf(output, "    ");
+      }
+      Printf(output, "pub mod %s {\n", name);
+      
+      // Add necessary imports for this module
+      for (int i = 0; i < depth + 1; i++) {
+        Printf(output, "    ");
+      }
+      Printf(output, "use std::os::raw::*;\n");
+      
+      // Add reference to ffi module (use super:: to reach parent scope)
+      for (int i = 0; i < depth + 1; i++) {
+        Printf(output, "    ");
+      }
+      if (depth == 0) {
+        Printf(output, "use super::ffi;\n\n");
+      } else {
+        // For nested modules, need to go up multiple levels
+        Printf(output, "use super::super::ffi;\n\n");
+      }
+      
+      // Output content if exists
+      String *content = Getattr(node, "content");
+      if (content && Len(content) > 0) {
+        // Indent content
+        String *indented = NewString("");
+        char *c = Char(content);
+        while (*c) {
+          for (int i = 0; i < depth + 1; i++) {
+            Printf(indented, "    ");
+          }
+          while (*c && *c != '\n') {
+            Putc(*c, indented);
+            c++;
+          }
+          if (*c == '\n') {
+            Putc('\n', indented);
+            c++;
+          }
+        }
+        Printv(output, indented, NIL);
+        Delete(indented);
+      }
+      
+      // Recursively output children
+      outputNamespaceTree(node, output, depth + 1);
+      
+      // Close this namespace
+      for (int i = 0; i < depth; i++) {
+        Printf(output, "    ");
+      }
+      Printf(output, "}\n");
+    }
   }
 
   /* ----------------------------------------------------------------------------- 
@@ -2016,21 +2304,70 @@ private:
    * Generate safe Rust wrapper function for global (non-member) functions.
    * Member functions are handled separately in emitRustImpl.
    * Handles:
-   *   - Global functions
+   *   - Global functions (with namespace support via pub mod)
    *   - Static member functions (associated functions)
    *   - Overloaded functions (adds type-based suffix)
    * ----------------------------------------------------------------------------- */
   void emitRustSafeWrapper(Node *n, String *wname, String *return_type, bool is_void) {
     String *symname = Getattr(n, "sym:name");
     
-    // Early deduplication check: if this symname has already been wrapped, skip
-    // This handles cases like functions with the same name in different namespaces
-    if (symname && Getattr(generated_wrapper_names, symname)) {
+    // Get namespace for global functions (sym:nspace attribute)
+    String *nspace = Getattr(n, "sym:nspace");
+    
+    // Try to get namespace from parentNode's symtab if not set directly
+    // This is needed because %feature("nspace") only works for classes/enums
+    bool is_member = GetFlag(n, "ismember");
+    if (!nspace && !is_member) {
+      Node *parent = Getattr(n, "parentNode");
+      if (parent) {
+        String *parent_nspace = Getattr(parent, "sym:nspace");
+        if (parent_nspace) {
+          nspace = parent_nspace;
+        } else {
+          Symtab *symtab = Getattr(parent, "symtab");
+          if (symtab) {
+            String *qname = Swig_symbol_qualified_language_scopename(symtab);
+            if (qname && Len(qname) > 0) {
+              nspace = qname;
+            }
+          }
+        }
+      }
+    }
+    
+    // For global functions in a namespace, redirect output to a temporary buffer
+    // and collect it into the namespace wrapper content
+    File *old_f_wrapper_code = NULL;
+    String *temp_wrapper = NULL;
+    bool need_namespace_collection = (nspace && !is_member);
+    
+    if (need_namespace_collection) {
+      old_f_wrapper_code = f_wrapper_code;
+      temp_wrapper = NewString("");
+      f_wrapper_code = temp_wrapper;
+    }
+    
+    // Build deduplication key that includes namespace
+    // Functions in different namespaces should NOT be deduplicated
+    String *dedup_key = NULL;
+    if (nspace && symname) {
+      dedup_key = NewStringf("%s::%s", nspace, symname);
+    } else if (symname) {
+      dedup_key = Copy(symname);
+    }
+    
+    // Early deduplication check: if this function has already been wrapped, skip
+    if (dedup_key && Getattr(generated_wrapper_names, dedup_key)) {
+      // Restore output buffer if we redirected it
+      if (need_namespace_collection) {
+        f_wrapper_code = old_f_wrapper_code;
+        Delete(temp_wrapper);
+      }
+      Delete(dedup_key);
       return;
     }
     
     ParmList *l = Getattr(n, "parms");
-    bool is_member = GetFlag(n, "ismember");
     bool is_static = GetFlag(n, "static") || static_flag;
     bool is_member_set = GetFlag(n, "memberset");
     bool is_member_get = GetFlag(n, "memberget");
@@ -2149,6 +2486,12 @@ private:
       }
       Delete(suffix);
     }
+
+    // For global functions, open namespace mod if needed
+    // Note: static member functions and member variable accessors are inside impl block,
+    // they don't need namespace wrapping here (namespace is handled at class level)
+    // For global functions, namespace is handled via the -namespace option
+    // (Rust doesn't allow the same mod to be defined multiple times)
 
     // Generate function signature
     if (class_impl_name) {
@@ -2377,9 +2720,23 @@ private:
       Printf(f_wrapper_code, "}\n\n");
     }
     
-    // Mark this symname as generated (for deduplication)
-    if (symname) {
-      Setattr(generated_wrapper_names, symname, "1");
+    // Mark this function as generated (for deduplication)
+    if (dedup_key) {
+      Setattr(generated_wrapper_names, dedup_key, "1");
+      Delete(dedup_key);
+    }
+    
+    // For global functions in a namespace, collect the generated code
+    if (need_namespace_collection) {
+      // Append to namespace buffer
+      if (nspace_wrapper_content && temp_wrapper && Len(temp_wrapper) > 0) {
+        String *nspace_buf = getNSpaceWrapperBuffer(nspace);
+        Append(nspace_buf, temp_wrapper);
+      }
+      
+      // Restore original output buffer
+      f_wrapper_code = old_f_wrapper_code;
+      Delete(temp_wrapper);
     }
     
     Delete(func_name);
@@ -5027,6 +5384,7 @@ private:
   String *director_vtable_fields_cpp; // Buffer for C++ VTable fields (associated const vtable mode)
 
   Hash *swig_types_hash;
+  Hash *opened_namespaces;          // Track which namespaces have been opened (to avoid duplicates in Rust)
   List *filenames_list;
   
   // Member variable accessor naming support
@@ -5035,6 +5393,14 @@ private:
   // FFI declaration deduplication
   Hash *generated_ffi_names;        // Set of FFI function names already generated
   Hash *generated_wrapper_names;    // Set of wrapper function names already generated
+  
+  // Namespace content collection for proper Rust mod generation
+  // Rust requires all content in a mod to be defined together, unlike C++ namespaces
+  // which can be spread across multiple definitions.
+  Hash *nspace_wrapper_content;     // nspace -> wrapper code content (safe wrapper layer)
+  Hash *nspace_ffi_content;         // nspace -> FFI declarations
+  String *current_nspace_buffer;    // Current output buffer for wrapper code
+  String *current_ffi_buffer;       // Current output buffer for FFI code
 };
 
 /* -----------------------------------------------------------------------------

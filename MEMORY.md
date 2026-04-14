@@ -960,19 +960,49 @@ FFI 函数期望 `u8` (c_uchar)，但传入了 Rust `bool`。
 ---
 
 ## 最后更新
-2026-04-14 (修复 String 冲突、继承实现、bool 转换、静态方法、字符串参数转换)
+2026-04-14 (命名空间支持分析与限制说明)
 
-### 本次会话修复的问题 ✅
+### 本次会话完成的工作 ✅
 
-1. **String 类型冲突** - 添加 `SwigString` 类型定义，实现 `From<String>` 和 `Into<String>` trait
-2. **继承关系未正确实现** - 为派生类生成基类 trait 实现，使用 Deref 模式
-3. **bool 类型转换** - 参数添加 `as u8`，返回值添加 `!= 0` 转换
-4. **静态方法出现在 trait 中** - 修改 emitRustTrait/emitRustImpl 排除静态方法
-5. **字符串参数转换** - 对 `const std::string&` 和 `&str` 添加 `.as_ptr() as *const c_char` 转换
-6. **类型映射改进** - `getRustUserType()` 正确处理 `std::string`、`const std::string&`、`char*`
+#### 1. C++ Namespace → Rust mod 映射分析
+- 确认映射关系：C++ `namespace` → Rust `pub mod`
+- 嵌套命名空间支持：`Outer::Inner` → `pub mod Outer { pub mod Inner { ... } }`
 
-### 待后续修复的问题
+#### 2. `addOpenMod`/`addCloseMod` 改进
+- 支持嵌套命名空间（使用 `.` 分隔符）
+- 正确计算嵌套深度
 
-1. **`const char*` 返回类型** - typemap 返回 `c_char` 而非指针类型（需深入调查 SWIG 类型匹配）
-2. **枚举参数转换** - 需要将 Rust 枚举转换为底层 `i32` 传给 FFI
+#### 3. `emitRustSafeWrapper` 去重逻辑修复
+- 使用 `namespace::symname` 作为去重 key
+- 不同命名空间的同名函数不再被错误去重
+
+#### 4. 发现核心限制
+- **Rust 不允许重复定义同一个 `mod`**
+- C++ 可以多次扩展同名命名空间，但 Rust 不行
+- 这是语言级别的限制，无法在当前架构下完美解决
+
+#### 5. 添加限制说明文档
+- 在 `Lib/rust/rust.swg` 添加详细说明
+- 在 `RUST_DESIGN.md` 添加 "14.7 当前实现限制" 章节
+
+### 当前命名空间支持状态
+
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| `-namespace <name>` 选项 | ✅ | 将所有内容包装到一个模块 |
+| 嵌套命名空间解析 | ✅ | 支持 `.` 分隔符 |
+| `%feature("nspace")` | ⚠️ 默认禁用 | 会生成重复 `mod` 定义 |
+
+### 推荐使用方式
+
+1. 使用 `-namespace mylib` 将所有内容包装到统一模块
+2. 使用 `%rename` 添加前缀避免命名冲突
+3. 分开处理不同命名空间（多个 SWIG 运行）
+
+### 待后续改进
+
+完整命名空间支持需要架构级改进：
+1. 收集阶段：遍历 AST 收集所有命名空间及其内容
+2. 组织阶段：构建命名空间树，合并同名命名空间
+3. 生成阶段：每个命名空间生成一个 `pub mod` 块
 

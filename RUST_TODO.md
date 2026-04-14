@@ -774,5 +774,53 @@ unsafe { ffi::Rust_BasicTypes_bool_val_set__SWIG_0(self.ptr, bool_val) }
 
 ---
 
+## Phase 22: 命名空间支持分析与限制 (2026-04-14) ✅
+
+### 22.1 已完成的分析
+
+- [x] 分析 C++ namespace → Rust mod 映射关系
+- [x] 改进 `addOpenMod`/`addCloseMod` 支持嵌套命名空间
+- [x] 修复 `emitRustSafeWrapper` 去重逻辑（使用 `namespace::symname` 作为 key）
+- [x] 发现核心限制：Rust 不允许重复定义同一个 `mod`
+- [x] 在 `RUST_DESIGN.md` 添加限制说明文档
+- [x] 在 `Lib/rust/rust.swg` 添加使用说明
+
+### 22.2 当前命名空间支持状态
+
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| `-namespace <name>` 选项 | ✅ | 将所有内容包装到一个模块 |
+| 嵌套命名空间解析 | ✅ | 支持 `.` 分隔符 |
+| `%feature("nspace")` | ⚠️ 默认禁用 | 会生成重复 `mod` 定义 |
+
+### 22.3 核心限制
+
+**问题**：Rust 不允许重复定义同一个 `mod`
+
+```cpp
+// C++ 合法
+namespace math { struct Vector { ... }; }
+namespace math { struct Matrix { ... }; }  // 扩展 math
+
+// Rust 不合法
+pub mod math { pub struct Vector { ... } }
+pub mod math { pub struct Matrix { ... } }  // 错误！重复定义
+```
+
+### 22.4 当前推荐方案
+
+1. 使用 `-namespace mylib` 包装所有内容
+2. 使用 `%rename` 添加前缀避免冲突
+3. 分开处理不同命名空间（多个 SWIG 运行）
+
+### 22.5 未来改进（Phase 23）
+
+- [ ] 收集阶段：遍历 AST 收集所有命名空间及其内容
+- [ ] 组织阶段：构建命名空间树，合并同名命名空间
+- [ ] 生成阶段：每个命名空间生成一个 `pub mod` 块
+- [ ] 需要数据结构：`Hash *namespace_content`, `Hash *opened_namespaces`
+
+---
+
 ## 最后更新
-2026-04-14 (完成 Phase 20 修复，发现新问题 Phase 21：String 冲突、继承实现、bool 转换)
+2026-04-14 (命名空间支持分析与限制说明)

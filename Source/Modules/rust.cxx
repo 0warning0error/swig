@@ -83,7 +83,9 @@ public:
     director_vtable_fields(NULL),
     swig_types_hash(NULL),
     filenames_list(NULL),
-    class_method_names(NULL) {
+    class_method_names(NULL),
+    generated_ffi_names(NULL),
+    generated_wrapper_names(NULL) {
     /* For now, multiple inheritance in directors is disabled.
        This should be easy to implement though. */
     director_multiple_inheritance = 0;
@@ -258,6 +260,8 @@ public:
 
     swig_types_hash = NewHash();
     filenames_list = NewList();
+    generated_ffi_names = NewHash();     // For FFI declaration deduplication
+    generated_wrapper_names = NewHash(); // For wrapper function deduplication
 
     // Set module and crate names
     if (!module_name) {
@@ -1131,9 +1135,53 @@ private:
    * Get Rust user-visible type from a SWIG type.
    * This returns user-friendly types like i32, i64, etc. for use in trait/impl signatures.
    * For custom types (classes/structs), returns the wrapper type name.
+   * 
+   * For std::string types:
+   *   - std::string (value) -> String
+   *   - const std::string& -> &str  
+   *   - std::string& -> &mut str (treated as &str for simplicity)
    * ----------------------------------------------------------------------------- */
   String *getRustUserType(SwigType *t) {
     if (!t) return NewString("*mut c_void");
+    
+    // Get type string for more flexible pattern matching
+    String *type_str = SwigType_str(t, 0);
+    
+    // Special handling for std::string types - check BEFORE generic pointer/reference check
+    // because std::string references should map to &str, not *mut c_void
+    String *base = SwigType_base(t);
+    if (base) {
+      // Check for std::string or string in std namespace
+      if (Strstr(base, "basic_string") || 
+          Strcmp(base, "string") == 0 ||
+          Strcmp(base, "std::string") == 0) {
+        Delete(base);
+        if (type_str) Delete(type_str);
+        // Check if it's a reference type
+        if (SwigType_isreference(t)) {
+          // const std::string& -> &str, std::string& -> &str
+          return NewString("&str");
+        }
+        // std::string by value -> String
+        return NewString("String");
+      }
+      // Check for char* / const char* - these are C strings
+      // Use type_str for more robust detection since const char* may appear as "char const *"
+      bool is_char_pointer = (Strcmp(base, "char") == 0 && SwigType_ispointer(t)) ||
+                             (type_str && (Strstr(type_str, "char *") || 
+                                           Strstr(type_str, "char*") ||
+                                           Strstr(type_str, "char const")));
+      if (is_char_pointer) {
+        Delete(base);
+        if (type_str) Delete(type_str);
+        // For return types, use *const c_char to allow proper pointer handling
+        // The safe wrapper will convert to &str or String as needed
+        return NewString("*const c_char");
+      }
+      Delete(base);
+    }
+    
+    if (type_str) Delete(type_str);
     
     // Check for pointer/reference types first - these become opaque pointers
     if (SwigType_ispointer(t) || SwigType_isreference(t)) {
@@ -1174,7 +1222,6 @@ private:
       case T_USER:
         // For user-defined types (classes/structs), return the type name as wrapper
         {
-          String *base = SwigType_base(t);
           String *clean = cleanTypeName(base);
           Delete(base);
           return clean;
@@ -1182,7 +1229,6 @@ private:
       default:
         // For other unknown types, try to get the base name
         {
-          String *base = SwigType_base(t);
           if (base && Len(base) > 0) {
             String *clean = cleanTypeName(base);
             Delete(base);
@@ -1272,6 +1318,69 @@ private:
     }
     
     return result;
+  }
+
+  /* ----------------------------------------------------------------------------- 
+   * cleanRustName()
+   * 
+   * Clean a name to make it a valid Rust identifier.
+   * Replaces :: with _, removes/escapes special characters.
+   * For types like "std::string", returns "std_string".
+   * Returns a new string that should be deleted by the caller.
+   * ----------------------------------------------------------------------------- */
+  String *cleanRustName(String *name) {
+    if (!name || Len(name) == 0) {
+      return NewString("");
+    }
+    
+    String *result = Copy(name);
+    
+    // Replace C++ scope separator "::" with "_"
+    if (Strstr(result, "::")) {
+      Replaceall(result, "::", "_");
+    }
+    
+    // Replace spaces with "_"
+    if (Strstr(result, " ")) {
+      Replaceall(result, " ", "_");
+    }
+    
+    // Replace angle brackets with "_"
+    if (Strstr(result, "<")) {
+      Replaceall(result, "<", "_");
+    }
+    if (Strstr(result, ">")) {
+      Replaceall(result, ">", "");
+    }
+    
+    // Replace commas with "_"
+    if (Strstr(result, ",")) {
+      Replaceall(result, ",", "_");
+    }
+    
+    // Replace asterisks with "ptr"
+    if (Strstr(result, "*")) {
+      Replaceall(result, "*", "ptr");
+    }
+    
+    // Replace ampersands with "ref"
+    if (Strstr(result, "&")) {
+      Replaceall(result, "&", "ref");
+    }
+    
+    // Remove any remaining non-alphanumeric characters (except underscore)
+    String *clean = NewString("");
+    char *str = Char(result);
+    for (int i = 0; str[i] != '\0'; i++) {
+      char c = str[i];
+      if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || 
+          (c >= '0' && c <= '9') || c == '_') {
+        Printf(clean, "%c", c);
+      }
+    }
+    
+    Delete(result);
+    return clean;
   }
 
   /* ----------------------------------------------------------------------------- 
@@ -1664,6 +1773,58 @@ private:
     // Write safe wrapper code
     if (safe_wrapper_flag) {
       Printf(f_rust, "use std::os::raw::*;\n\n");  // Import types needed by wrapper code
+      
+      // Generate SwigString type definition for std::string support
+      // This provides a wrapper for C++ std::string with From/Into conversions to Rust String
+      Printf(f_rust, "/// Wrapper for C++ std::string\n");
+      Printf(f_rust, "/// \n");
+      Printf(f_rust, "/// This type provides bidirectional conversion between C++ std::string\n");
+      Printf(f_rust, "/// and Rust's String type. Use `.into()` to convert to String.\n");
+      Printf(f_rust, "pub struct SwigString {\n");
+      Printf(f_rust, "    ptr: *mut c_void,\n");
+      Printf(f_rust, "}\n\n");
+      
+      Printf(f_rust, "impl SwigString {\n");
+      Printf(f_rust, "    /// Create a new SwigString from a Rust String\n");
+      Printf(f_rust, "    pub fn new(s: &str) -> Self {\n");
+      Printf(f_rust, "        // Note: This requires FFI support - placeholder implementation\n");
+      Printf(f_rust, "        // In practice, this will be called from generated code\n");
+      Printf(f_rust, "        SwigString { ptr: std::ptr::null_mut() }\n");
+      Printf(f_rust, "    }\n");
+      Printf(f_rust, "    \n");
+      Printf(f_rust, "    /// Convert to Rust String (takes ownership)\n");
+      Printf(f_rust, "    pub fn into_string(self) -> String {\n");
+      Printf(f_rust, "        // The actual conversion is done in generated method wrappers\n");
+      Printf(f_rust, "        // which use CStr::from_ptr to convert C strings\n");
+      Printf(f_rust, "        String::new()\n");
+      Printf(f_rust, "    }\n");
+      Printf(f_rust, "}\n\n");
+      
+      Printf(f_rust, "impl Drop for SwigString {\n");
+      Printf(f_rust, "    fn drop(&mut self) {\n");
+      Printf(f_rust, "        // C++ std::string destructor is called via FFI\n");
+      Printf(f_rust, "        // This is handled by the generated wrapper code\n");
+      Printf(f_rust, "    }\n");
+      Printf(f_rust, "}\n\n");
+      
+      Printf(f_rust, "impl From<SwigString> for String {\n");
+      Printf(f_rust, "    fn from(s: SwigString) -> String {\n");
+      Printf(f_rust, "        s.into_string()\n");
+      Printf(f_rust, "    }\n");
+      Printf(f_rust, "}\n\n");
+      
+      Printf(f_rust, "impl std::fmt::Display for SwigString {\n");
+      Printf(f_rust, "    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n");
+      Printf(f_rust, "        write!(f, \"SwigString(...)\")\n");
+      Printf(f_rust, "    }\n");
+      Printf(f_rust, "}\n\n");
+      
+      Printf(f_rust, "impl std::fmt::Debug for SwigString {\n");
+      Printf(f_rust, "    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n");
+      Printf(f_rust, "        write!(f, \"SwigString {{ ptr: {:?} }}\", self.ptr)\n");
+      Printf(f_rust, "    }\n");
+      Printf(f_rust, "}\n\n");
+      
       Printf(f_rust, "// Safe wrapper functions\n\n");
       Dump(f_wrapper_code, f_rust);
     }
@@ -1678,6 +1839,13 @@ private:
    * Generate Rust FFI function declaration.
    * ----------------------------------------------------------------------------- */
     void emitRustFFIDeclaration(Node *n, String *wname, String *return_type, bool is_void) {
+      // Check if this FFI function has already been generated (deduplication)
+      if (Getattr(generated_ffi_names, wname)) {
+        return;  // Skip duplicate
+      }
+      // Mark as generated
+      Setattr(generated_ffi_names, wname, "1");
+      
       ParmList *l = Getattr(n, "parms");
       
       Printf(f_ffi_code, "    extern \"C\" {\n");
@@ -1854,6 +2022,13 @@ private:
    * ----------------------------------------------------------------------------- */
   void emitRustSafeWrapper(Node *n, String *wname, String *return_type, bool is_void) {
     String *symname = Getattr(n, "sym:name");
+    
+    // Early deduplication check: if this symname has already been wrapped, skip
+    // This handles cases like functions with the same name in different namespaces
+    if (symname && Getattr(generated_wrapper_names, symname)) {
+      return;
+    }
+    
     ParmList *l = Getattr(n, "parms");
     bool is_member = GetFlag(n, "ismember");
     bool is_static = GetFlag(n, "static") || static_flag;
@@ -2023,8 +2198,11 @@ private:
         Printf(f_wrapper_code, ", ");
       }
       // Use original parameter name if available, otherwise use lname
-      Printf(f_wrapper_code, "%s: %s", pname ? pname : ln, rust_type);
+      // Clean the name to ensure valid Rust identifier
+      String *clean_pname = pname ? cleanRustName(pname) : (ln ? cleanRustName(ln) : NewStringf("arg%d", arg_num));
+      Printf(f_wrapper_code, "%s: %s", clean_pname, rust_type);
       arg_num++;
+      Delete(clean_pname);
       Delete(rust_type);
 
       // Move to next parameter
@@ -2037,15 +2215,51 @@ private:
 
     Printf(f_wrapper_code, ")");
 
-    // Return type
-    if (!is_void) {
+    // Return type - need to check if it's bool or enum for conversion
+    bool return_is_bool = false;
+    bool return_is_enum = false;
+    if (!is_void && return_type) {
+      // Check if return type is bool
+      if (Cmp(return_type, "bool") == 0) {
+        return_is_bool = true;
+      }
+      // Check if return type is an enum - try multiple methods
+      if (!return_is_bool) {
+        // Method 1: Check original type attribute
+        SwigType *orig_type = Getattr(n, "type");
+        if (orig_type && SwigType_isenum(orig_type)) {
+          return_is_enum = true;
+        }
+        // Method 2: Check if return_type matches a known enum by symbol lookup
+        if (!return_is_enum) {
+          Node *enum_node = Swig_symbol_clookup(return_type, 0);
+          if (enum_node && Cmp(Getattr(enum_node, "nodeType"), "enum") == 0) {
+            return_is_enum = true;
+          }
+        }
+        // Method 3: Check type string for enum markers
+        if (!return_is_enum && orig_type) {
+          String *type_str = SwigType_str(orig_type, 0);
+          if (type_str && Strstr(type_str, "enum")) {
+            return_is_enum = true;
+          }
+          if (type_str) Delete(type_str);
+        }
+      }
       Printf(f_wrapper_code, " -> %s", return_type);
     }
 
     Printf(f_wrapper_code, " {\n");
 
     // Function body - call FFI
-    if (class_impl_name) {
+    if (return_is_enum) {
+      // For enum return types, we need transmute
+      if (class_impl_name) {
+        Printf(f_wrapper_code, "        unsafe { std::mem::transmute::<i32, %s>(ffi::%s(", return_type, wname);
+      } else {
+        Printf(f_wrapper_code, "    unsafe { std::mem::transmute::<i32, %s>(ffi::%s(", return_type, wname);
+      }
+    } else if (class_impl_name) {
       Printf(f_wrapper_code, "        unsafe { ffi::%s(", wname);
     } else {
       Printf(f_wrapper_code, "    unsafe { ffi::%s(", wname);
@@ -2077,12 +2291,57 @@ private:
 
       String *pname = Getattr(p, "name");
       String *ln = Getattr(p, "lname");
+      SwigType *ptype = Getattr(p, "type");
 
       if (arg_num > 0) {
         Printf(f_wrapper_code, ", ");
       }
-      // Use original parameter name for safe wrapper
-      Printf(f_wrapper_code, "%s", pname ? pname : ln);
+      // Use original parameter name for safe wrapper (cleaned for Rust validity)
+      String *clean_pname = cleanRustName(pname ? pname : ln);
+      
+      // Handle bool parameter conversion (bool -> u8 for FFI)
+      if (ptype && SwigType_type(ptype) == T_BOOL) {
+        Printf(f_wrapper_code, "%s as u8", clean_pname);
+      } else {
+        // Check if this is an enum type (including enum class)
+        String *pbase = SwigType_base(ptype);
+        bool is_enum_param = false;
+        
+        // Method 1: Direct enum check
+        if (SwigType_isenum(ptype)) {
+          is_enum_param = true;
+        }
+        // Method 2: Check if type name matches known enum
+        else if (pbase) {
+          // Check for enum class types
+          Node *enum_node = Swig_symbol_clookup(pbase, 0);
+          if (enum_node && Cmp(Getattr(enum_node, "nodeType"), "enum") == 0) {
+            is_enum_param = true;
+          }
+          // Check if type string contains enum markers
+          if (!is_enum_param) {
+            String *type_str = SwigType_str(ptype, 0);
+            if (type_str && Strstr(type_str, "enum")) {
+              is_enum_param = true;
+            }
+            if (type_str) Delete(type_str);
+          }
+        }
+        
+        if (is_enum_param) {
+          // Handle enum parameter conversion (Rust enum -> i32 for FFI)
+          Printf(f_wrapper_code, "%s as i32", clean_pname);
+        } else if (pbase && (Strstr(pbase, "basic_string") || 
+                              Strcmp(pbase, "string") == 0 ||
+                              Strcmp(pbase, "std::string") == 0)) {
+          // String type needs conversion
+          Printf(f_wrapper_code, "%s.as_ptr() as *const c_char", clean_pname);
+        } else {
+          Printf(f_wrapper_code, "%s", clean_pname);
+        }
+        if (pbase) Delete(pbase);
+      }
+      Delete(clean_pname);
       arg_num++;
 
       // Move to next parameter
@@ -2094,12 +2353,33 @@ private:
     }
 
     if (class_impl_name) {
-      Printf(f_wrapper_code, ") }\n");
+      // Handle bool return type conversion (u8 -> bool)
+      if (return_is_bool) {
+        Printf(f_wrapper_code, ") != 0 }\n");
+      } else if (return_is_enum) {
+        // Close the transmute and FFI call - already wrapped at the start
+        Printf(f_wrapper_code, ")) }\n");
+      } else {
+        Printf(f_wrapper_code, ") }\n");
+      }
       Printf(f_wrapper_code, "    }\n");
       Printf(f_wrapper_code, "}\n\n");
     } else {
-      Printf(f_wrapper_code, ") }\n");
+      // Handle bool return type conversion (u8 -> bool)
+      if (return_is_bool) {
+        Printf(f_wrapper_code, ") != 0 }\n");
+      } else if (return_is_enum) {
+        // Close the transmute and FFI call - already wrapped at the start
+        Printf(f_wrapper_code, ")) }\n");
+      } else {
+        Printf(f_wrapper_code, ") }\n");
+      }
       Printf(f_wrapper_code, "}\n\n");
+    }
+    
+    // Mark this symname as generated (for deduplication)
+    if (symname) {
+      Setattr(generated_wrapper_names, symname, "1");
     }
     
     Delete(func_name);
@@ -2144,9 +2424,14 @@ private:
         Printf(simple_type, "_long");
       } else if (Strstr(type_str, "void")) {
         Printf(simple_type, "_void");
+      } else if (Strstr(type_str, "std::string") || Strstr(base_type, "basic_string")) {
+        // std::string -> _string
+        Printf(simple_type, "_string");
       } else {
-        // For other complex types, use the base type name
-        Printf(simple_type, "_%s", base_type);
+        // For other complex types, use the base type name (cleaned)
+        String *clean_base = cleanRustName(base_type);
+        Printf(simple_type, "_%s", clean_base);
+        Delete(clean_base);
       }
       
       Append(suffix, simple_type);
@@ -2222,11 +2507,16 @@ private:
 
     // Track method names to detect overloads
     Hash *method_counts = NewHash();
+    // Track generated method signatures to skip const/non-const overloads (keep first one)
+    Hash *generated_signatures = NewHash();
 
     // First pass: count occurrences of each method name
+    // Note: Static methods should NOT be in the trait - they become associated functions
     for (Node *child = firstChild(n); child; child = nextSibling(child)) {
       if (Strcmp(nodeType(child), "cdecl") == 0) {
-        if (GetFlag(child, "ismember") && !GetFlag(child, "static")) {
+        // Check for static method using both GetFlag and storage attribute
+        bool is_static = GetFlag(child, "static") || checkAttribute(child, "storage", "static");
+        if (GetFlag(child, "ismember") && !is_static) {
           String *decl = Getattr(child, "decl");
           if (decl && SwigType_isfunction(decl)) {
             String *mname = Getattr(child, "sym:name");
@@ -2244,7 +2534,11 @@ private:
 
     for (Node *child = firstChild(n); child; child = nextSibling(child)) {
       if (Strcmp(nodeType(child), "cdecl") == 0) {
-        if (GetFlag(child, "ismember") && !GetFlag(child, "static")) {
+        // Skip static methods - they should not be in the trait
+        // Use both GetFlag("static") and checkAttribute("storage", "static")
+        if (GetFlag(child, "static") || checkAttribute(child, "storage", "static")) continue;
+        
+        if (GetFlag(child, "ismember")) {
           // Check if this is a function (method), not a variable
           String *decl = Getattr(child, "decl");
           if (!decl || !SwigType_isfunction(decl)) continue;
@@ -2257,14 +2551,20 @@ private:
 
           // Determine self type based on const-ness
           // Use the same const detection logic as emitRustImpl for consistency
-          bool is_const_method = false;
-          SwigType *child_type = Getattr(child, "type");
-          if (child_type && SwigType_isconst(child_type)) {
-            is_const_method = true;
+          // Note: SwigType_isconst(decl) checks if the method declaration has const qualifier
+          // This is different from SwigType_isconst(type) which checks if the return type is const
+          bool is_const_method = (decl && SwigType_isconst(decl));
+          
+          // Generate signature key: method_name + parameter types (for const/non-const dedup)
+          String *sig_key = NewStringf("%s|%s", mname, emitOverloadSuffix(params));
+          if (Getattr(generated_signatures, sig_key)) {
+            // Already generated this signature (const/non-const overload) - skip
+            Delete(sig_key);
+            continue;
           }
-          if (decl && Strstr(decl, "r.q(const)")) {
-            is_const_method = true;
-          }
+          // Mark this signature as generated
+          Setattr(generated_signatures, sig_key, "1");
+          Delete(sig_key);
           
           String *self_type = is_const_method ? NewString("&self") : NewString("&mut self");
 
@@ -2299,7 +2599,14 @@ private:
           } else if (total_count > 1) {
             // Add type-based suffix for overloaded methods
             String *suffix = emitOverloadSuffix(params);
-            final_mname = NewStringf("%s%s", mname, suffix);
+            // For const/non-const overloads with same parameters, add _const suffix
+            if (is_const_method && Len(suffix) == 0) {
+              final_mname = NewStringf("%s_const", mname);
+            } else if (is_const_method) {
+              final_mname = NewStringf("%s%s_const", mname, suffix);
+            } else {
+              final_mname = NewStringf("%s%s", mname, suffix);
+            }
             Delete(suffix);
           } else {
             final_mname = Copy(mname);
@@ -2341,18 +2648,26 @@ private:
 
           // Return type
           if (mtype && SwigType_type(mtype) != T_VOID) {
-            String *ret_type = Swig_typemap_lookup("rusttype", child, "", 0);
-            if (!ret_type || Len(ret_type) == 0 || Strstr(ret_type, "$")) {
-              // Typemap not found or contains unresolved variables
-              // Use our own type resolution
+            String *ret_type = NULL;
+            // First check if the return type is a pointer type that needs special handling
+            // Check the type string directly for char* types
+            // Note: const char* may appear as "char const *" in SWIG
+            String *type_str = SwigType_str(mtype, 0);
+            bool is_char_ptr = (type_str && (Strstr(type_str, "char *") || 
+                                              Strstr(type_str, "char*") ||
+                                              Strstr(type_str, "char const")));
+            if (type_str) Delete(type_str);
+            
+            if (is_char_ptr) {
+              // char* or const char* - always use getRustUserType
               ret_type = getRustUserType(mtype);
             } else {
-              // Check if the type string looks invalid (e.g., "PODType *" with space)
-              if (Strstr(ret_type, " ")) {
-                // Invalid Rust type, use fallback
+              ret_type = Swig_typemap_lookup("rusttype", child, "", 0);
+              if (!ret_type || Len(ret_type) == 0 || Strstr(ret_type, "$")) {
+                ret_type = getRustUserType(mtype);
+              } else if (Strstr(ret_type, " ")) {
                 ret_type = getRustUserType(mtype);
               } else {
-                // Process the type (handle SWIGENUM etc.)
                 ret_type = processRustType(ret_type, mtype);
               }
             }
@@ -2371,6 +2686,7 @@ private:
 
     Delete(method_counts);
     Delete(method_indices);
+    Delete(generated_signatures);
 
     Printf(f_wrapper_code, "}\n\n");
   }
@@ -2423,9 +2739,13 @@ private:
 
     // Track method names to detect overloads (same as emitRustTrait)
     Hash *method_counts = NewHash();
+    // Track generated method signatures to skip const/non-const overloads (keep first one)
+    Hash *generated_signatures = NewHash();
     for (Node *child = firstChild(n); child; child = nextSibling(child)) {
       if (Strcmp(nodeType(child), "cdecl") == 0) {
-        if (GetFlag(child, "ismember") && !GetFlag(child, "static")) {
+        // Check for static method using both GetFlag and storage attribute
+        bool is_static = GetFlag(child, "static") || checkAttribute(child, "storage", "static");
+        if (GetFlag(child, "ismember") && !is_static) {
           String *decl = Getattr(child, "decl");
           if (decl && SwigType_isfunction(decl)) {
             String *mname = Getattr(child, "sym:name");
@@ -2442,7 +2762,9 @@ private:
     // Process member functions
     for (Node *child = firstChild(n); child; child = nextSibling(child)) {
       if (Strcmp(nodeType(child), "cdecl") == 0) {
-        if (GetFlag(child, "ismember") && !GetFlag(child, "static")) {
+        // Check for static method using both GetFlag and storage attribute
+        bool is_static = GetFlag(child, "static") || checkAttribute(child, "storage", "static");
+        if (GetFlag(child, "ismember") && !is_static) {
           // Check if this is a function (method), not a variable
           String *decl_attr = Getattr(child, "decl");
           if (!decl_attr || !SwigType_isfunction(decl_attr)) continue;
@@ -2456,14 +2778,19 @@ private:
           ParmList *params = Getattr(child, "parms");
 
           // Determine self type based on const-ness
-          bool is_const_method = false;
-          SwigType *type = Getattr(child, "type");
-          if (type && SwigType_isconst(type)) {
-            is_const_method = true;
+          // Note: SwigType_isconst(decl_attr) checks if the method declaration has const qualifier
+          bool is_const_method = (decl_attr && SwigType_isconst(decl_attr));
+          
+          // Generate signature key: method_name + parameter types (for const/non-const dedup)
+          String *sig_key = NewStringf("%s|%s", mname, emitOverloadSuffix(params));
+          if (Getattr(generated_signatures, sig_key)) {
+            // Already generated this signature (const/non-const overload) - skip
+            Delete(sig_key);
+            continue;
           }
-          if (decl_attr && Strstr(decl_attr, "r.q(const)")) {
-            is_const_method = true;
-          }
+          // Mark this signature as generated
+          Setattr(generated_signatures, sig_key, "1");
+          Delete(sig_key);
           
           String *self_type = is_const_method ? NewString("&self") : NewString("&mut self");
 
@@ -2496,7 +2823,14 @@ private:
             final_mname = Copy(operator_rust_name);
           } else if (total_count > 1) {
             String *suffix = emitOverloadSuffix(params);
-            final_mname = NewStringf("%s%s", mname, suffix);
+            // For const/non-const overloads with same parameters, add _const suffix
+            if (is_const_method && Len(suffix) == 0) {
+              final_mname = NewStringf("%s_const", mname);
+            } else if (is_const_method) {
+              final_mname = NewStringf("%s%s_const", mname, suffix);
+            } else {
+              final_mname = NewStringf("%s%s", mname, suffix);
+            }
             Delete(suffix);
           } else {
             final_mname = Copy(mname);
@@ -2532,16 +2866,27 @@ private:
 
           // Return type
           bool has_return = false;
+          String *ret_type = NULL;
           if (mtype && SwigType_type(mtype) != T_VOID) {
-            String *ret_type = Swig_typemap_lookup("rusttype", child, "", 0);
-            if (!ret_type || Len(ret_type) == 0 || Strstr(ret_type, "$")) {
-              // Typemap not found or contains unresolved variables
-              ret_type = getRustUserType(mtype);
-            } else if (Strstr(ret_type, " ")) {
-              // Invalid Rust type (e.g., "PODType *")
+            // Check the type string directly for char* types
+            // Note: const char* may appear as "char const *" in SWIG
+            String *type_str = SwigType_str(mtype, 0);
+            bool is_char_ptr = (type_str && (Strstr(type_str, "char *") || 
+                                              Strstr(type_str, "char*") ||
+                                              Strstr(type_str, "char const")));
+            if (type_str) Delete(type_str);
+            
+            if (is_char_ptr) {
               ret_type = getRustUserType(mtype);
             } else {
-              ret_type = processRustType(ret_type, mtype);
+              ret_type = Swig_typemap_lookup("rusttype", child, "", 0);
+              if (!ret_type || Len(ret_type) == 0 || Strstr(ret_type, "$")) {
+                ret_type = getRustUserType(mtype);
+              } else if (Strstr(ret_type, " ")) {
+                ret_type = getRustUserType(mtype);
+              } else {
+                ret_type = processRustType(ret_type, mtype);
+              }
             }
             if (ret_type && Len(ret_type) > 0) {
               Printf(f_wrapper_code, " -> %s", ret_type);
@@ -2559,9 +2904,96 @@ private:
             // Check if return type is a custom type (not basic type)
             SwigType *return_type = Getattr(child, "type");
             bool is_custom_type = false;
+            bool is_string_type = false;
+            bool is_bool_type = false;
             String *return_type_name = NULL;
             
-            if (return_type && SwigType_type(return_type) == T_USER) {
+            // Check for bool return type
+            if (return_type && SwigType_type(return_type) == T_BOOL) {
+              is_bool_type = true;
+            }
+            
+            // Check for string types first (including SwigString from getRustUserType)
+            if (return_type && !is_bool_type) {
+              String *base = SwigType_base(return_type);
+              if (base && (Strstr(base, "basic_string") || 
+                           Strcmp(base, "string") == 0 ||
+                           Strcmp(base, "std::string") == 0)) {
+                is_string_type = true;
+              }
+              if (base) Delete(base);
+            }
+            
+            // Also check ret_type for String/SwigString
+            if (!is_string_type && !is_bool_type && ret_type) {
+              if (Cmp(ret_type, "SwigString") == 0 || Cmp(ret_type, "String") == 0) {
+                is_string_type = true;
+              }
+            }
+            
+            if (is_bool_type) {
+              // Bool return: FFI returns u8, convert to bool with != 0
+              Printf(f_wrapper_code, "unsafe { ffi::%s(self.ptr", wname);
+              
+              // Add parameters
+              for (Parm *p = params; p; p = nextSibling(p)) {
+                String *pname = Getattr(p, "name");
+                SwigType *ptype = Getattr(p, "type");
+                // Handle bool parameter conversion
+                if (ptype && SwigType_type(ptype) == T_BOOL) {
+                  Printf(f_wrapper_code, ", %s as u8", pname ? pname : "arg");
+                } else {
+                  // Check if this is a string type that needs conversion
+                  String *pbase = SwigType_base(ptype);
+                  bool is_string_param = pbase && (Strstr(pbase, "basic_string") || 
+                                                   Strcmp(pbase, "string") == 0 ||
+                                                   Strcmp(pbase, "std::string") == 0);
+                  if (is_string_param) {
+                    Printf(f_wrapper_code, ", %s.as_ptr() as *const c_char", pname ? pname : "arg");
+                  } else {
+                    Printf(f_wrapper_code, ", %s", pname ? pname : "arg");
+                  }
+                  if (pbase) Delete(pbase);
+                }
+              }
+              
+              Printf(f_wrapper_code, ") != 0 }\n");
+            } else if (is_string_type) {
+              // String return: FFI returns *mut c_char, convert to String
+              // Use CStr::from_ptr and to_string_lossy().into_owned()
+              Printf(f_wrapper_code, "unsafe {\n");
+              Printf(f_wrapper_code, "            let ptr = ffi::%s(self.ptr", wname);
+              
+              // Add parameters
+              for (Parm *p = params; p; p = nextSibling(p)) {
+                String *pname = Getattr(p, "name");
+                SwigType *ptype = Getattr(p, "type");
+                // Handle bool parameter conversion
+                if (ptype && SwigType_type(ptype) == T_BOOL) {
+                  Printf(f_wrapper_code, ", %s as u8", pname ? pname : "arg");
+                } else {
+                  // Check if this is a string type that needs conversion
+                  String *pbase = SwigType_base(ptype);
+                  bool is_string_param = pbase && (Strstr(pbase, "basic_string") || 
+                                                   Strcmp(pbase, "string") == 0 ||
+                                                   Strcmp(pbase, "std::string") == 0);
+                  if (is_string_param) {
+                    Printf(f_wrapper_code, ", %s.as_ptr() as *const c_char", pname ? pname : "arg");
+                  } else {
+                    Printf(f_wrapper_code, ", %s", pname ? pname : "arg");
+                  }
+                  if (pbase) Delete(pbase);
+                }
+              }
+              
+              Printf(f_wrapper_code, ");\n");
+              Printf(f_wrapper_code, "            if ptr.is_null() {\n");
+              Printf(f_wrapper_code, "                String::new()\n");
+              Printf(f_wrapper_code, "            } else {\n");
+              Printf(f_wrapper_code, "                std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned()\n");
+              Printf(f_wrapper_code, "            }\n");
+              Printf(f_wrapper_code, "        }\n");
+            } else if (return_type && SwigType_type(return_type) == T_USER) {
               is_custom_type = true;
               return_type_name = getRustUserType(return_type);
             }
@@ -2573,19 +3005,51 @@ private:
               // Add parameters
               for (Parm *p = params; p; p = nextSibling(p)) {
                 String *pname = Getattr(p, "name");
-                Printf(f_wrapper_code, ", %s", pname ? pname : "arg");
+                SwigType *ptype = Getattr(p, "type");
+                // Handle bool parameter conversion
+                if (ptype && SwigType_type(ptype) == T_BOOL) {
+                  Printf(f_wrapper_code, ", %s as u8", pname ? pname : "arg");
+                } else {
+                  // Check if this is a string type that needs conversion
+                  String *pbase = SwigType_base(ptype);
+                  bool is_string_param = pbase && (Strstr(pbase, "basic_string") || 
+                                                   Strcmp(pbase, "string") == 0 ||
+                                                   Strcmp(pbase, "std::string") == 0);
+                  if (is_string_param) {
+                    Printf(f_wrapper_code, ", %s.as_ptr() as *const c_char", pname ? pname : "arg");
+                  } else {
+                    Printf(f_wrapper_code, ", %s", pname ? pname : "arg");
+                  }
+                  if (pbase) Delete(pbase);
+                }
               }
               
               Printf(f_wrapper_code, ") } }\n");
               Delete(return_type_name);
-            } else {
+            } else if (!is_string_type && !is_bool_type) {
               // Basic type return - just call FFI
               Printf(f_wrapper_code, "unsafe { ffi::%s(self.ptr", wname);
               
               // Add parameters
               for (Parm *p = params; p; p = nextSibling(p)) {
                 String *pname = Getattr(p, "name");
-                Printf(f_wrapper_code, ", %s", pname ? pname : "arg");
+                SwigType *ptype = Getattr(p, "type");
+                // Handle bool parameter conversion
+                if (ptype && SwigType_type(ptype) == T_BOOL) {
+                  Printf(f_wrapper_code, ", %s as u8", pname ? pname : "arg");
+                } else {
+                  // Check if this is a string type that needs conversion
+                  String *pbase = SwigType_base(ptype);
+                  bool is_string_param = pbase && (Strstr(pbase, "basic_string") || 
+                                                   Strcmp(pbase, "string") == 0 ||
+                                                   Strcmp(pbase, "std::string") == 0);
+                  if (is_string_param) {
+                    Printf(f_wrapper_code, ", %s.as_ptr() as *const c_char", pname ? pname : "arg");
+                  } else {
+                    Printf(f_wrapper_code, ", %s", pname ? pname : "arg");
+                  }
+                  if (pbase) Delete(pbase);
+                }
               }
               
               Printf(f_wrapper_code, ") }\n");
@@ -2597,7 +3061,23 @@ private:
             // Add parameters
             for (Parm *p = params; p; p = nextSibling(p)) {
               String *pname = Getattr(p, "name");
-              Printf(f_wrapper_code, ", %s", pname ? pname : "arg");
+              SwigType *ptype = Getattr(p, "type");
+              // Handle bool parameter conversion
+              if (ptype && SwigType_type(ptype) == T_BOOL) {
+                Printf(f_wrapper_code, ", %s as u8", pname ? pname : "arg");
+              } else {
+                // Check if this is a string type that needs conversion
+                String *pbase = SwigType_base(ptype);
+                bool is_string_param = pbase && (Strstr(pbase, "basic_string") || 
+                                                 Strcmp(pbase, "string") == 0 ||
+                                                 Strcmp(pbase, "std::string") == 0);
+                if (is_string_param) {
+                  Printf(f_wrapper_code, ", %s.as_ptr() as *const c_char", pname ? pname : "arg");
+                } else {
+                  Printf(f_wrapper_code, ", %s", pname ? pname : "arg");
+                }
+                if (pbase) Delete(pbase);
+              }
             }
             
             Printf(f_wrapper_code, ") }\n");
@@ -2613,8 +3093,201 @@ private:
 
     Delete(method_counts);
     Delete(method_indices);
+    Delete(generated_signatures);
 
     Printf(f_wrapper_code, "}\n\n");
+    
+    // If this is a derived class, also implement the base class trait
+    // This is required because Rust trait inheritance requires the implementing type
+    // to implement all parent traits
+    if (derived_flag && baseclass && Len(baseclass) > 0) {
+      Printf(f_wrapper_code, "// Base trait implementation for inheritance\n");
+      Printf(f_wrapper_code, "impl %sTrait for %s {\n", baseclass, name);
+      
+      // Get base class node to iterate its methods
+      Node *base_node = classLookup(baseclass);
+      if (base_node) {
+        // Track method names for base class
+        Hash *base_method_counts = NewHash();
+        Hash *base_method_indices = NewHash();
+        
+        for (Node *child = firstChild(base_node); child; child = nextSibling(child)) {
+          if (Strcmp(nodeType(child), "cdecl") == 0) {
+            if (GetFlag(child, "ismember") && !GetFlag(child, "static")) {
+              String *decl = Getattr(child, "decl");
+              if (decl && SwigType_isfunction(decl)) {
+                String *mname = Getattr(child, "sym:name");
+                if (mname) {
+                  int count = GetInt(base_method_counts, mname);
+                  SetInt(base_method_counts, mname, count + 1);
+                }
+              }
+            }
+          }
+        }
+        
+        // Generate implementations for base class methods
+        for (Node *child = firstChild(base_node); child; child = nextSibling(child)) {
+          if (Strcmp(nodeType(child), "cdecl") == 0) {
+            if (GetFlag(child, "ismember") && !GetFlag(child, "static")) {
+              String *decl_attr = Getattr(child, "decl");
+              if (!decl_attr || !SwigType_isfunction(decl_attr)) continue;
+              
+              String *mname = Getattr(child, "sym:name");
+              String *wname = Getattr(child, "wrap:name");
+              if (!wname) {
+                wname = Swig_name_wrapper(mname);
+              }
+              SwigType *mtype = Getattr(child, "type");
+              ParmList *params = Getattr(child, "parms");
+              
+              // Determine self type based on const-ness
+              bool is_const_method = (decl_attr && SwigType_isconst(decl_attr));
+              String *self_type = is_const_method ? NewString("&self") : NewString("&mut self");
+              
+              // Check if this method is overloaded
+              int total_count = GetInt(base_method_counts, mname);
+              int current_index = GetInt(base_method_indices, mname);
+              SetInt(base_method_indices, mname, current_index + 1);
+              
+              // Generate method name with suffix if overloaded
+              String *final_mname;
+              if (total_count > 1) {
+                String *suffix = emitOverloadSuffix(params);
+                final_mname = NewStringf("%s%s", mname, suffix);
+                Delete(suffix);
+              } else {
+                final_mname = Copy(mname);
+              }
+              
+              Printf(f_wrapper_code, "    fn %s(%s", final_mname, self_type);
+              
+              // Add parameters
+              for (Parm *p = params; p; p = nextSibling(p)) {
+                String *pname = Getattr(p, "name");
+                SwigType *ptype = Getattr(p, "type");
+                
+                String *lname_attr = Getattr(p, "lname");
+                String *rust_type = NULL;
+                if (lname_attr) {
+                  rust_type = Swig_typemap_lookup("rusttype", p, lname_attr, 0);
+                }
+                if (!rust_type || Len(rust_type) == 0) {
+                  rust_type = getRustUserType(ptype);
+                }
+                
+                Printf(f_wrapper_code, ", ");
+                Printf(f_wrapper_code, "%s: %s", pname ? pname : "arg", rust_type);
+              }
+              
+              Printf(f_wrapper_code, ")");
+              
+              // Return type
+              bool has_return = false;
+              String *ret_type = NULL;
+              if (mtype && SwigType_type(mtype) != T_VOID) {
+                ret_type = Swig_typemap_lookup("rusttype", child, "", 0);
+                if (!ret_type || Len(ret_type) == 0 || Strstr(ret_type, "$")) {
+                  ret_type = getRustUserType(mtype);
+                } else if (Strstr(ret_type, " ")) {
+                  ret_type = getRustUserType(mtype);
+                } else {
+                  ret_type = processRustType(ret_type, mtype);
+                }
+                if (ret_type && Len(ret_type) > 0) {
+                  Printf(f_wrapper_code, " -> %s", ret_type);
+                  has_return = true;
+                }
+              }
+              
+              Printf(f_wrapper_code, " {\n");
+              
+              // Generate FFI call - delegate to base class method
+              Printf(f_wrapper_code, "        ");
+              
+              if (has_return && ret_type && (Cmp(ret_type, "SwigString") == 0 || Cmp(ret_type, "String") == 0)) {
+                // String return type
+                Printf(f_wrapper_code, "unsafe {\n");
+                Printf(f_wrapper_code, "            let ptr = ffi::%s(self.ptr", wname);
+                for (Parm *p = params; p; p = nextSibling(p)) {
+                  String *pname = Getattr(p, "name");
+                  SwigType *ptype = Getattr(p, "type");
+                  if (ptype && SwigType_type(ptype) == T_BOOL) {
+                    Printf(f_wrapper_code, ", %s as u8", pname ? pname : "arg");
+                  } else {
+                    String *pbase = SwigType_base(ptype);
+                    bool is_string_param = pbase && (Strstr(pbase, "basic_string") || 
+                                                     Strcmp(pbase, "string") == 0 ||
+                                                     Strcmp(pbase, "std::string") == 0);
+                    if (is_string_param) {
+                      Printf(f_wrapper_code, ", %s.as_ptr() as *const c_char", pname ? pname : "arg");
+                    } else {
+                      Printf(f_wrapper_code, ", %s", pname ? pname : "arg");
+                    }
+                    if (pbase) Delete(pbase);
+                  }
+                }
+                Printf(f_wrapper_code, ");\n");
+                Printf(f_wrapper_code, "            if ptr.is_null() { String::new() } else { std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned() }\n");
+                Printf(f_wrapper_code, "        }\n");
+              } else if (has_return) {
+                Printf(f_wrapper_code, "unsafe { ffi::%s(self.ptr", wname);
+                for (Parm *p = params; p; p = nextSibling(p)) {
+                  String *pname = Getattr(p, "name");
+                  SwigType *ptype = Getattr(p, "type");
+                  if (ptype && SwigType_type(ptype) == T_BOOL) {
+                    Printf(f_wrapper_code, ", %s as u8", pname ? pname : "arg");
+                  } else {
+                    String *pbase = SwigType_base(ptype);
+                    bool is_string_param = pbase && (Strstr(pbase, "basic_string") || 
+                                                     Strcmp(pbase, "string") == 0 ||
+                                                     Strcmp(pbase, "std::string") == 0);
+                    if (is_string_param) {
+                      Printf(f_wrapper_code, ", %s.as_ptr() as *const c_char", pname ? pname : "arg");
+                    } else {
+                      Printf(f_wrapper_code, ", %s", pname ? pname : "arg");
+                    }
+                    if (pbase) Delete(pbase);
+                  }
+                }
+                Printf(f_wrapper_code, ") }\n");
+              } else {
+                Printf(f_wrapper_code, "unsafe { ffi::%s(self.ptr", wname);
+                for (Parm *p = params; p; p = nextSibling(p)) {
+                  String *pname = Getattr(p, "name");
+                  SwigType *ptype = Getattr(p, "type");
+                  if (ptype && SwigType_type(ptype) == T_BOOL) {
+                    Printf(f_wrapper_code, ", %s as u8", pname ? pname : "arg");
+                  } else {
+                    String *pbase = SwigType_base(ptype);
+                    bool is_string_param = pbase && (Strstr(pbase, "basic_string") || 
+                                                     Strcmp(pbase, "string") == 0 ||
+                                                     Strcmp(pbase, "std::string") == 0);
+                    if (is_string_param) {
+                      Printf(f_wrapper_code, ", %s.as_ptr() as *const c_char", pname ? pname : "arg");
+                    } else {
+                      Printf(f_wrapper_code, ", %s", pname ? pname : "arg");
+                    }
+                    if (pbase) Delete(pbase);
+                  }
+                }
+                Printf(f_wrapper_code, ") }\n");
+              }
+              
+              Printf(f_wrapper_code, "    }\n");
+              
+              Delete(self_type);
+              Delete(final_mname);
+            }
+          }
+        }
+        
+        Delete(base_method_counts);
+        Delete(base_method_indices);
+      }
+      
+      Printf(f_wrapper_code, "}\n\n");
+    }
   }
 
   /* ----------------------------------------------------------------------------- 
@@ -2871,7 +3544,10 @@ private:
       String *suffix = emitOverloadSuffix(l);
       if (suffix && Len(suffix) > 0) {
         Delete(ctor_name);
-        ctor_name = NewStringf("new%s", suffix);
+        // Clean the suffix to ensure valid Rust identifier
+        String *clean_suffix = cleanRustName(suffix);
+        ctor_name = NewStringf("new%s", clean_suffix);
+        Delete(clean_suffix);
       }
       Delete(suffix);
     }
@@ -2908,9 +3584,11 @@ private:
           Printf(f_wrapper_code, ", ");
         }
         
-        // Use lname (which is set by SWIG) or pname, or generate a name
-        String *arg_name = ln ? ln : (pname ? pname : NewStringf("arg%d", arg_num));
+        // Use lname (which is set by SWIG) or pname, clean for Rust validity
+        String *raw_name = ln ? ln : (pname ? pname : NewStringf("arg%d", arg_num));
+        String *arg_name = cleanRustName(raw_name);
         Printf(f_wrapper_code, "%s: %s", arg_name, rust_type);
+        Delete(arg_name);
         arg_num++;
       }
     }
@@ -2938,7 +3616,19 @@ private:
         
         // Use lname (which is set by SWIG) or pname
         String *arg_name = ln ? ln : (pname ? pname : NewStringf("arg%d", arg_num));
-        Printf(f_wrapper_code, "%s", arg_name);
+        
+        // Check if this is a string type that needs conversion
+        SwigType *ptype = Getattr(p, "type");
+        String *pbase = SwigType_base(ptype);
+        bool is_string_param = pbase && (Strstr(pbase, "basic_string") || 
+                                         Strcmp(pbase, "string") == 0 ||
+                                         Strcmp(pbase, "std::string") == 0);
+        if (is_string_param) {
+          Printf(f_wrapper_code, "%s.as_ptr() as *const c_char", arg_name);
+        } else {
+          Printf(f_wrapper_code, "%s", arg_name);
+        }
+        if (pbase) Delete(pbase);
         arg_num++;
       }
     }
@@ -3430,6 +4120,10 @@ private:
       Printf(f_directors_h, "struct %s_VTable;  // Forward declaration\n", dirclassname);
     }
     
+    // Add extern "C" declaration for drop_director function (implemented in Rust)
+    Printf(f_directors_h, "\n// Rust director drop function (implemented in Rust)\n");
+    Printf(f_directors_h, "extern \"C\" void SwigDirector_%s_drop_director(void *rust_director);\n\n", classname);
+    
     Printf(f_directors_h, "class %s : public %s, public Swig::Director {\n", dirclassname, classtype);
     Printf(f_directors_h, "public:\n");
     // Note: constructor and destructor declarations are handled by classDirectorConstructor and Language base class
@@ -3806,6 +4500,7 @@ private:
    * ----------------------------------------------------------------------------- */
   int classDirectorDestructor(Node *n) {
     Node *current_class = getCurrentClass();
+    String *classname = Getattr(current_class, "sym:name");
     String *dirclassname = directorClassName(current_class);
     
     // Generate destructor declaration in header
@@ -3814,7 +4509,7 @@ private:
     // Generate destructor implementation
     Printf(f_directors, "%s::~%s() {\n", dirclassname, dirclassname);
     Printf(f_directors, "    if (swig_rust_director_) {\n");
-    Printf(f_directors, "        %s_drop_director(swig_rust_director_);\n", dirclassname);
+    Printf(f_directors, "        SwigDirector_%s_drop_director(swig_rust_director_);\n", classname);
     Printf(f_directors, "        swig_rust_director_ = nullptr;\n");
     Printf(f_directors, "    }\n");
     Printf(f_directors, "}\n\n");
@@ -3919,14 +4614,17 @@ private:
       // Call Rust callback
       // For overloaded virtual functions, add a type suffix to the callback name
       String *callback_suffix = emitOverloadSuffix(l);
-      String *callback_name = NewStringf("%s_%s%s_callback", dirclassname, name, callback_suffix);
-      // Note: Don't Delete callback_suffix here - it's used later for VTable fields and thunks
+      String *clean_callback_suffix = cleanRustName(callback_suffix);
+      String *callback_name = NewStringf("%s_%s%s_callback", dirclassname, name, clean_callback_suffix);
+      Delete(callback_suffix);
       
       if (use_vtable) {
         // VTable mode: call through vtable_ pointer instead of member variable
         // This avoids copying all function pointers - we just store one vtable pointer
         String *vtable_field_suffix = emitOverloadSuffix(l);
-        String *callback_ptr_name = NewStringf("%s%s", name, vtable_field_suffix);
+        String *clean_vtable_suffix = cleanRustName(vtable_field_suffix);
+        String *callback_ptr_name = NewStringf("%s%s", name, clean_vtable_suffix);
+        Delete(vtable_field_suffix);
         
         if (!is_void) {
           Printf(f_directors, "        if (vtable_ && vtable_->%s) {\n", callback_ptr_name);
@@ -4132,7 +4830,7 @@ private:
       }  // end if (!use_vtable)
       
       Delete(callback_name);
-      Delete(callback_suffix);
+      Delete(clean_callback_suffix);
     }
     
     // Generate Rust Director trait method
@@ -4141,8 +4839,10 @@ private:
     
     // For overloaded virtual methods, add type suffix to the trait method name
     String *trait_method_suffix = emitOverloadSuffix(l);
-    Printf(f_wrapper_code, "    fn %s%s(%s", name, trait_method_suffix, self_type);
+    String *clean_trait_suffix = cleanRustName(trait_method_suffix);
+    Printf(f_wrapper_code, "    fn %s%s(%s", name, clean_trait_suffix, self_type);
     Delete(trait_method_suffix);
+    Delete(clean_trait_suffix);
     
     // Add parameters
     if (l) {
@@ -4171,7 +4871,8 @@ private:
       // For void: fn(*const c_void, args...) -> bool
       // For non-void: fn(*const c_void, *mut ret_type, args...) -> bool
       String *vtable_field_suffix = emitOverloadSuffix(l);
-      String *vtable_field_name = NewStringf("%s%s", name, vtable_field_suffix);
+      String *clean_vtable_suffix = cleanRustName(vtable_field_suffix);
+      String *vtable_field_name = NewStringf("%s%s", name, clean_vtable_suffix);
       
       // Rust field definition
       Printf(director_vtable_fields, "    pub %s: unsafe extern \"C\" fn(*const c_void", vtable_field_name);
@@ -4255,6 +4956,7 @@ private:
       
       Delete(vtable_field_name);
       Delete(vtable_field_suffix);
+      Delete(clean_vtable_suffix);
     }
     
     Delete(ret_str);
@@ -4329,6 +5031,10 @@ private:
   
   // Member variable accessor naming support
   Hash *class_method_names;         // Set of method names in current class (for collision detection)
+  
+  // FFI declaration deduplication
+  Hash *generated_ffi_names;        // Set of FFI function names already generated
+  Hash *generated_wrapper_names;    // Set of wrapper function names already generated
 };
 
 /* -----------------------------------------------------------------------------

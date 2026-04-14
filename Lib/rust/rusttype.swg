@@ -299,7 +299,7 @@
 %typemap(rsffitype) enum SWIGTYPE                   "c_int"
 %typemap(cout) enum SWIGTYPE                        "int"
 %typemap(in) enum SWIGTYPE                        "$1 = ($1_ltype)$input;"
-%typemap(out) enum SWIGTYPE                       "$result = $1;"
+%typemap(out) enum SWIGTYPE                       "$result = static_cast<int>($1);"
 
 %typemap(rusttype) const enum SWIGTYPE &            "SWIGENUM"
 %typemap(rsffitype) const enum SWIGTYPE &           "c_int"

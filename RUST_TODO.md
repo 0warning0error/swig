@@ -45,8 +45,7 @@
 ### 2.3 字符串类型映射
 - [x] `const char*` → `&CStr` / `String`
 - [x] `char*` → `*mut c_char`
-- [x] `std::string` → 不透明类型或 String
-
+- [x] `std::string` → 专门的SwigString类型映射C++的字符串，保留双向转换成Rust的String类型（实现From和Into Trait）。
 ### 2.4 Typemap 实现
 - [x] 实现 `rusttype` typemap
 - [x] 实现 `rsffitype` typemap
@@ -567,8 +566,8 @@ impl Index<i32> for Vector3 {
 **文件**: `Lib/rust/std_string.i`
 
 - [x] 创建 `Lib/rust/std_string.i`
-- [x] 实现 `std::string` → `String` 映射
-- [x] 实现 `const std::string&` → `&str` 映射
+- [ ] 实现 `std::string` → `SwigString` 专门类型的映射，同时支持双向转换成String
+- [x] 实现 `const std::string&` → `&SwigString` 映射（但最好还是用指针，rust的生命周期很难搞）
 - [x] 处理异常（空字符串）
 - [x] 添加测试用例 (`std_string_test.i`)
 
@@ -656,10 +655,124 @@ impl Index<i32> for Vector3 {
 
 ## 最后更新
 2026-04-13 (完成 Phase 17 STL 容器绑定核心部分)
-- 完成 std::string 绑定 (`Lib/rust/std_string.i`)
+- 基本完成 std::string 绑定 (`Lib/rust/std_string.i`)
 - 完成 std::vector 绑定 (`Lib/rust/std_vector.i`)
 - 完成 std::pair 绑定 (`Lib/rust/std_pair.i`)
 - 完成 std::map 绑定 (`Lib/rust/std_map.i`)
 - 添加测试用例
 - Phase 1-17 核心功能全部完成 ✅
 - 下一步：Phase 17.5 std::set 和 Phase 16 运算符映射
+
+---
+
+## Phase 20: 代码生成修复 (2026-04-14) 🔄
+
+### 20.1 已完成的修复 ✅
+
+- [x] 添加 `cleanRustName()` 函数处理无效标识符字符
+- [x] 修复 `emitOverloadSuffix()` 处理 `std::string` 类型
+- [x] 修复参数名清理（移除 `::` 等无效字符）
+- [x] 修复构造函数命名清理
+
+### 20.2 待修复的问题 (通过 rustc 检测)
+
+#### 20.2.1 FFI 函数重复声明
+- [ ] **问题**: `Rust_global_check_status__SWIG_0` 定义了两次
+- [ ] **原因**: 全局函数的 FFI 声明被重复生成
+- [ ] **位置**: `test_swig.rs` 第 366 行和 370 行
+
+#### 20.2.2 Trait 方法重复定义
+- [ ] **问题**: `OverloadTestTrait::get_value` 定义了两次
+- [ ] **原因**: const 和非 const 版本的方法名相同
+- [ ] **解决方案**: 修改 `emitRustTrait()` 方法计数逻辑，为 const 方法添加 `_const` 后缀
+
+#### 20.2.3 全局函数重复定义
+- [ ] **问题**: `global_check_status_int` 定义了两次
+- [ ] **原因**: 全局函数包装被重复生成
+- [ ] **位置**: `test_swig.rs` 第 1285 行和 1289 行
+
+#### 20.2.4 Director trait 方法名问题
+- [ ] **问题**: 方法名如 `on_message_std::string` 包含 `::`
+- [ ] **影响**: 无效的 Rust 标识符
+
+#### 20.2.5 VTable 字段名问题
+- [ ] **问题**: 字段名如 `on_message_std::string` 包含 `::`
+- [ ] **影响**: 无效的 Rust 标识符
+
+#### 20.2.6 未定义类型 `std_string`
+- [ ] **问题**: 代码使用了 `std_string` 类型但未定义
+- [ ] **解决方案**: 生成类型定义或专门定义 `SwigString`，支持双向转换成String
+
+### 20.3 修复优先级
+
+1. **P0**: FFI 函数重复声明（影响编译）✅
+2. **P0**: Trait 方法重复定义（影响编译）✅
+3. **P0**: 全局函数重复定义（影响编译）✅
+4. **P1**: Director trait/VTable 方法名清理 ✅
+5. **P1**: `std_string` 类型定义 ✅
+
+### 20.4 设计决策：const/non-const 重载处理 ✅
+
+**问题**：Rust trait 方法不能仅通过 self 类型（`&self` vs `&mut self`）区分重载
+
+**决策**：**只保留第一个出现的版本，跳过后续相同签名的 const/non-const 重载**
+
+**实现**：
+- 添加 `generated_signatures` Hash 跟踪已生成的方法签名
+- 当遇到相同签名时跳过（保留第一个）
+
+### 20.5 问题修复状态 ✅
+
+| 问题 | 状态 |
+|------|------|
+| FFI 函数重复声明 | ✅ 已修复 |
+| 全局函数重复定义 | ✅ 已修复 |
+| const/non-const 方法重复 | ✅ 已修复（只保留第一个） |
+| Director trait 方法名 | ✅ 已修复 |
+| VTable 字段名 | ✅ 已修复 |
+| `std_string` 未定义 | ✅ 已修复（返回 `String` 类型） |
+
+---
+
+## Phase 21: 新发现的代码生成问题 (2026-04-14) 🔄
+
+### 21.1 String 类型冲突 🔴 P0
+
+**问题**:
+```rust
+fn whoami(&self) -> String {
+    String { ptr: unsafe { ffi::Rust_Base_whoami__SWIG_0(self.ptr) } }
+}
+```
+
+`String` 是 Rust 标准库类型，不能用作结构体包装器。
+
+- [ ] **解决方案**: 生成自定义类型 `SwigString` 
+- [ ] **位置**: `emitRustImpl()` 中处理返回值类型
+
+### 21.2 继承关系未正确实现 🔴 P0
+
+**问题**:
+```rust
+pub trait DerivedTrait: BaseTrait { ... }
+impl DerivedTrait for Derived { ... }  // 错误：Derived 没有实现 BaseTrait
+```
+
+- [ ] **解决方案**: 为派生类同时生成基类 trait 的实现
+- [ ] **位置**: `emitRustImpl()` 中处理继承关系
+
+### 21.3 bool 类型转换问题 🟡 P1
+
+**问题**:
+```rust
+unsafe { ffi::Rust_BasicTypes_bool_val_set__SWIG_0(self.ptr, bool_val) }
+// 错误：expected `u8`, found `bool`
+```
+
+- [ ] **解决方案**: 添加类型转换 `bool_val as u8` 或修改 typemap
+- [ ] **位置**: `emitRustImpl()` 中生成 FFI 调用的逻辑
+
+---
+
+## 最后更新
+2026-04-14 (完成 Phase 20 修复，发现新问题 Phase 21：String 冲突、继承实现、bool 转换)

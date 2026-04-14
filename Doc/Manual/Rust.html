@@ -1,0 +1,1009 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html>
+<head>
+<title>SWIG and Rust</title>
+<link rel="stylesheet" type="text/css" href="style.css">
+<meta http-equiv="content-type" content="text/html; charset=UTF-8">
+</head>
+<body bgcolor="#FFFFFF">
+<H1><a name="Rust">40 SWIG and Rust</a></H1>
+<!-- INDEX -->
+<div class="sectiontoc">
+<ul>
+<li><a href="#Rust_overview">Overview</a>
+<li><a href="#Rust_examples">Examples</a>
+<li><a href="#Rust_running_swig">Running SWIG with Rust</a>
+<ul>
+<li><a href="#Rust_commandline">Rust-specific Commandline Options</a>
+<li><a href="#Rust_outputs">Generated Wrapper Files</a>
+</ul>
+<li><a href="#Rust_basic_tour">A tour of basic C/C++ wrapping</a>
+<ul>
+<li><a href="#Rust_package">Rust Crate and Module Name</a>
+<li><a href="#Rust_names">Rust Names</a>
+<li><a href="#Rust_constants">Rust Constants</a>
+<li><a href="#Rust_enumerations">Rust Enumerations</a>
+<li><a href="#Rust_classes">Rust Classes</a>
+<ul>
+<li><a href="#Rust_class_memory">Rust Class Memory Management</a>
+<li><a href="#Rust_class_inheritance">Rust Class Inheritance</a>
+</ul>
+<li><a href="#Rust_director_classes">Rust Director Classes</a>
+<ul>
+<li><a href="#Rust_director_example">Director Example</a>
+<li><a href="#Rust_director_safety">Director Safety</a>
+</ul>
+<li><a href="#Rust_overloading">Function Overloading</a>
+<li><a href="#Rust_templates">Rust Templates</a>
+<li><a href="#Rust_namespaces">Namespaces</a>
+<li><a href="#Rust_exceptions">Rust and C++ Exceptions</a>
+<li><a href="#Rust_smart_pointers">Smart Pointers</a>
+<li><a href="#Rust_primitive_type_mappings">Default Rust Primitive Type Mappings</a>
+<li><a href="#Rust_typemaps">Rust Typemaps</a>
+</ul>
+</ul>
+</div>
+<!-- INDEX -->
+
+
+
+<p>
+This chapter describes SWIG's support of Rust. For more information on
+the Rust programming language, see <a href="https://www.rust-lang.org/">rust-lang.org</a>.
+</p>
+
+<H2><a name="Rust_overview">40.1 Overview</a></H2>
+
+
+<p>
+Rust can call C functions directly through its FFI (Foreign Function Interface) mechanism.
+However, there is no built-in way to call C++ code from Rust. SWIG fills this gap by
+generating safe Rust wrappers around C++ code.
+</p>
+
+<p>
+SWIG's Rust module generates two layers of code:
+</p>
+
+<ul>
+<li><b>FFI Layer</b>: Low-level <tt>extern "C"</tt> declarations that directly interface with C/C++.
+This layer uses raw pointers and C-compatible types.</li>
+<li><b>Safe Wrapper Layer</b>: High-level Rust API with proper ownership semantics,
+type safety, and idiomatic Rust patterns.</li>
+</ul>
+
+<p>
+The generated code is compatible with Rust 1.0 and later, with no external crate dependencies.
+</p>
+
+<H2><a name="Rust_examples">40.2 Examples</a></H2>
+
+
+<p>
+Working examples can be found in the
+<a href="https://github.com/swig/swig/tree/master/Examples/rust">SWIG source tree</a>.
+Test cases are available in
+<a href="https://github.com/swig/swig/tree/master/Examples/test-suite/rust">Examples/test-suite/rust</a>.
+</p>
+
+
+<H2><a name="Rust_running_swig">40.3 Running SWIG with Rust</a></H2>
+
+
+<p>
+To generate Rust bindings, use the <tt>-rust</tt> option with SWIG:
+</p>
+
+<div class="code"><pre>
+swig -rust -c++ -module example example.i
+</pre></div>
+
+<p>
+This will generate:
+</p>
+<ul>
+<li><tt>example_wrap.cxx</tt> - C++ wrapper functions</li>
+<li><tt>example.rs</tt> - Rust FFI declarations and safe wrappers</li>
+</ul>
+
+<p>
+To compile and use the bindings, you need to:
+</p>
+
+<div class="code"><pre>
+# 1. Set SWIG_LIB environment variable
+export SWIG_LIB=/path/to/swig/Lib
+
+# 2. Run SWIG
+swig -rust -c++ -module example example.i
+
+# 3. Compile C++ wrapper
+g++ -c example_wrap.cxx -o example_wrap.o
+
+# 4. Create static library
+ar rcs libexample.a example_wrap.o
+
+# 5. Use in Rust project
+# Add to Cargo.toml:
+# [dependencies]
+# example = { path = "." }
+</pre></div>
+
+
+<H3><a name="Rust_commandline">40.3.1 Rust-specific Commandline Options</a></H3>
+
+
+<p>
+These are the command line options for SWIG's Rust module:
+</p>
+
+<div class="code"><pre>
+swig -rust -help
+</pre></div>
+
+<table summary="Rust-specific options">
+<tr>
+<th>Rust-specific options</th>
+</tr>
+
+<tr>
+<td>-crate-name &lt;name&gt;</td>
+<td>Set the crate name (default: module name)</td>
+</tr>
+
+<tr>
+<td>-module &lt;name&gt;</td>
+<td>Set the module name</td>
+</tr>
+
+<tr>
+<td>-namespace &lt;name&gt;</td>
+<td>Generate wrappers into Rust mod &lt;name&gt;</td>
+</tr>
+
+<tr>
+<td>-safe-wrapper</td>
+<td>Generate safe wrapper layer (default: on)</td>
+</tr>
+
+<tr>
+<td>-ffi-only</td>
+<td>Only generate FFI declarations (no safe wrappers)</td>
+</tr>
+
+<tr>
+<td>-no-directors</td>
+<td>Disable director (virtual function callback) support</td>
+</tr>
+
+<tr>
+<td>-trait-overload</td>
+<td>Use trait-based overload resolution for more idiomatic Rust API</td>
+</tr>
+
+<tr>
+<td>-director-thin</td>
+<td>Use thin vtable for directors (default, more efficient)</td>
+</tr>
+
+<tr>
+<td>-director-boxed</td>
+<td>Use Box&lt;Box&lt;dyn Trait&gt;&gt; for directors (simpler)</td>
+</tr>
+
+<tr>
+<td>-director-vtable</td>
+<td>Use associated const vtable for directors (zero overhead, default)</td>
+</tr>
+
+</table>
+
+
+<H3><a name="Rust_outputs">40.3.2 Generated Wrapper Files</a></H3>
+
+
+<p>
+SWIG generates the following files for Rust:
+</p>
+
+<table summary="Generated files">
+<tr>
+<th>File</th>
+<th>Description</th>
+</tr>
+
+<tr>
+<td>module_wrap.cxx</td>
+<td>C++ wrapper functions with extern "C" linkage</td>
+</tr>
+
+<tr>
+<td>module_wrap.h</td>
+<td>C header file (only when directors are enabled)</td>
+</tr>
+
+<tr>
+<td>module.rs</td>
+<td>Rust FFI declarations and safe wrapper layer</td>
+</tr>
+
+</table>
+
+
+<H2><a name="Rust_basic_tour">40.4 A tour of basic C/C++ wrapping</a></H2>
+
+
+<H3><a name="Rust_package">40.4.1 Rust Crate and Module Name</a></H3>
+
+
+<p>
+By default, the crate name and module name are derived from the %module directive:
+</p>
+
+<div class="code"><pre>
+%module mymodule
+</pre></div>
+
+<p>
+This generates <tt>mymodule.rs</tt>. You can override these with command line options:
+</p>
+
+<div class="code"><pre>
+swig -rust -c++ -crate-name mycrate -module mymodule example.i
+</pre></div>
+
+
+<H3><a name="Rust_names">40.4.2 Rust Names</a></H3>
+
+
+<p>
+SWIG translates C/C++ names to Rust names following these rules:
+</p>
+
+<ul>
+<li>Function and method names are converted to snake_case</li>
+<li>Class names become PascalCase struct names</li>
+<li>Constants become SCREAMING_SNAKE_CASE</li>
+<li>Enum names become PascalCase</li>
+</ul>
+
+
+<H3><a name="Rust_constants">40.4.3 Rust Constants</a></H3>
+
+
+<p>
+C/C++ constants are mapped to Rust <tt>const</tt> declarations:
+</p>
+
+<div class="code"><pre>
+// C++
+#define MAX_SIZE 100
+const double PI = 3.14159;
+</pre></div>
+
+<p>
+Generates:
+</p>
+
+<div class="code"><pre>
+// Rust
+pub const MAX_SIZE: i32 = 100;
+pub const PI: f64 = 3.14159;
+</pre></div>
+
+
+<H3><a name="Rust_enumerations">40.4.4 Rust Enumerations</a></H3>
+
+
+<p>
+C/C++ enums are mapped to Rust enums with <tt>#[repr(C)]</tt>:
+</p>
+
+<div class="code"><pre>
+// C++
+enum Color { RED, GREEN, BLUE };
+</pre></div>
+
+<p>
+Generates:
+</p>
+
+<div class="code"><pre>
+// Rust
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Color {
+    RED = 0,
+    GREEN = 1,
+    BLUE = 2,
+}
+</pre></div>
+
+
+<H3><a name="Rust_classes">40.4.5 Rust Classes</a></H3>
+
+
+<p>
+C++ classes are mapped to Rust using the struct + trait + impl pattern:
+</p>
+
+<div class="code"><pre>
+// C++
+class Animal {
+public:
+    Animal(const std::string&amp; name);
+    virtual ~Animal();
+    virtual void speak();
+    std::string getName() const;
+private:
+    std::string name;
+};
+</pre></div>
+
+<p>
+Generates:
+</p>
+
+<div class="code"><pre>
+// Rust
+
+// Struct holding the C++ pointer
+pub struct Animal {
+    ptr: *mut c_void,
+}
+
+// Trait defining the interface
+pub trait AnimalTrait {
+    fn speak(&amp;mut self);
+    fn getName(&amp;self) -&gt; String;
+}
+
+// Implementation
+impl Animal {
+    pub fn new(name: &amp;str) -&gt; Self {
+        // ...
+    }
+}
+
+impl Drop for Animal {
+    fn drop(&amp;mut self) {
+        // Call C++ destructor
+    }
+}
+
+impl AnimalTrait for Animal {
+    fn speak(&amp;mut self) {
+        unsafe { ffi::Animal_speak(self.ptr) }
+    }
+    fn getName(&amp;self) -&gt; String {
+        // ...
+    }
+}
+</pre></div>
+
+<H4><a name="Rust_class_memory">40.4.5.1 Rust Class Memory Management</a></H4>
+
+
+<p>
+Memory management follows Rust's ownership model:
+</p>
+
+<ul>
+<li><b>Constructors</b> create a new Rust struct that owns the C++ object</li>
+<li><b>Drop</b> is implemented to call the C++ destructor when the Rust struct goes out of scope</li>
+<li><b>No Copy/Clone</b> by default - prevents accidental double-frees</li>
+</ul>
+
+<p>
+For C++ classes that are safe to copy, you can implement Copy/Clone manually or use typemaps.
+</p>
+
+
+<H4><a name="Rust_class_inheritance">40.4.5.2 Rust Class Inheritance</a></H4>
+
+
+<p>
+Single inheritance is supported:
+</p>
+
+<div class="code"><pre>
+// C++
+class Dog : public Animal {
+public:
+    Dog(const std::string&amp; name);
+    void speak() override;
+};
+</pre></div>
+
+<p>
+The generated Rust code includes the base class trait:
+</p>
+
+<div class="code"><pre>
+// Rust
+pub trait DogTrait: AnimalTrait {
+    fn speak(&amp;mut self);
+}
+</pre></div>
+
+<p>
+Multiple inheritance is partially supported - additional base classes use upcast functions.
+</p>
+
+
+<H3><a name="Rust_director_classes">40.4.6 Rust Director Classes</a></H3>
+
+
+<p>
+Directors allow Rust to override C++ virtual functions. This enables implementing
+C++ interfaces in Rust and passing them back to C++.
+</p>
+
+<H4><a name="Rust_director_example">40.4.6.1 Director Example</a></H4>
+
+
+<p>
+Enable directors in your interface file:
+</p>
+
+<div class="code"><pre>
+// SWIG interface
+%module(directors="1") example
+%feature("director") Callback;
+
+%inline %{
+class Callback {
+public:
+    virtual ~Callback() {}
+    virtual void onEvent(int id) {}
+    virtual int process(int value) { return value; }
+};
+
+class Processor {
+public:
+    void setCallback(Callback* cb) { callback = cb; }
+    void notify(int id) { if (callback) callback-&gt;onEvent(id); }
+private:
+    Callback* callback = nullptr;
+};
+%}
+</pre></div>
+
+<p>
+In Rust, implement the director trait:
+</p>
+
+<div class="code"><pre>
+// Rust
+
+// Define your callback implementation
+struct MyCallback;
+
+impl CallbackDirector for MyCallback {
+    fn onEvent_int(&amp;self, id: i32) {
+        println!("Event received: {}", id);
+    }
+    
+    fn process_int(&amp;self, value: i32) -&gt; Option&lt;i32&gt; {
+        Some(value * 2)  // Double the value
+    }
+}
+
+// Use it
+fn main() {
+    let callback = Callback::new_with_trait(MyCallback);
+    let processor = Processor::new();
+    processor.setCallback(callback.ptr_mut());
+    processor.notify(42);
+}
+</pre></div>
+
+
+<H4><a name="Rust_director_safety">40.4.6.2 Director Safety</a></H4>
+
+
+<p>
+<b>Re-entrancy Warning:</b> C++ may call back into Rust during method execution.
+To ensure safety:
+</p>
+
+<ul>
+<li>Director trait methods use <tt>&amp;self</tt> by default (not <tt>&amp;mut self</tt>)</li>
+<li>Use <tt>Cell&lt;T&gt;</tt> for simple mutable state (Copy types)</li>
+<li>Use <tt>RefCell&lt;T&gt;</tt> for complex state (panics on re-entrancy)</li>
+<li>If you're certain no re-entrancy will occur, use <tt>&amp;mut self</tt> with caution</li>
+</ul>
+
+<div class="code"><pre>
+// Safe: uses Cell for mutable state
+struct SafeCallback {
+    count: Cell&lt;i32&gt;,
+}
+
+impl CallbackDirector for SafeCallback {
+    fn onEvent_int(&amp;self, id: i32) {
+        self.count.set(self.count.get() + 1);
+    }
+}
+</pre></div>
+
+
+<H3><a name="Rust_overloading">40.4.7 Function Overloading</a></H3>
+
+
+<p>
+Since Rust doesn't support function overloading, SWIG uses one of two approaches:
+</p>
+
+<p>
+<b>1. Type Suffix (default):</b>
+</p>
+
+<div class="code"><pre>
+// C++
+void draw(int x, int y);
+void draw(Point p);
+
+// Rust
+obj.draw_int_int(x, y);
+obj.draw_Point(p);
+</pre></div>
+
+<p>
+<b>2. Trait-based Overloading</b> (with <tt>-trait-overload</tt>):
+</p>
+
+<div class="code"><pre>
+// Rust
+pub trait Draw {
+    type Output;
+    fn call(self, obj: &amp;mut Shape) -&gt; Self::Output;
+}
+
+impl Draw for (i32, i32) { /* ... */ }
+impl Draw for Point { /* ... */ }
+
+// Usage
+shape.draw((10, 20));  // Calls draw(int, int)
+shape.draw(Point { x: 10, y: 20 });  // Calls draw(Point)
+</pre></div>
+
+
+<H3><a name="Rust_templates">40.4.8 Rust Templates</a></H3>
+
+
+<p>
+C++ template instantiation via <tt>%template</tt> is supported:
+</p>
+
+<div class="code"><pre>
+// C++
+template&lt;typename T&gt;
+class Container {
+public:
+    void add(const T&amp; item);
+    T get(int index) const;
+};
+
+// SWIG interface
+%template(IntContainer) Container&lt;int&gt;;
+%template(StringContainer) Container&lt;std::string&gt;;
+</pre></div>
+
+<p>
+Generates:
+</p>
+
+<div class="code"><pre>
+// Rust
+pub struct IntContainer { ptr: *mut c_void }
+pub struct StringContainer { ptr: *mut c_void }
+
+impl IntContainer {
+    pub fn add(&amp;mut self, item: i32);
+    pub fn get(&amp;self, index: i32) -&gt; i32;
+}
+</pre></div>
+
+
+<H3><a name="Rust_namespaces">40.4.9 Namespaces</a></H3>
+
+
+<p>
+C++ namespaces are mapped to Rust modules:
+</p>
+
+<div class="code"><pre>
+// C++
+namespace graphics {
+    class Shape { /* ... */ };
+    namespace primitives {
+        class Circle : public Shape { /* ... */ };
+    }
+}
+</pre></div>
+
+<p>
+Generates:
+</p>
+
+<div class="code"><pre>
+// Rust
+pub mod graphics {
+    pub struct Shape { /* ... */ }
+    
+    pub mod primitives {
+        pub struct Circle { /* ... */ }
+    }
+}
+</pre></div>
+
+
+<H3><a name="Rust_exceptions">40.4.10 Rust and C++ Exceptions</a></H3>
+
+
+<p>
+C++ exceptions cannot be caught across the FFI boundary. SWIG provides mechanisms to
+convert exceptions to Rust-friendly error handling:
+</p>
+
+<ul>
+<li><b>Panic</b>: Default behavior - C++ exceptions cause panic!</li>
+<li><b>Error codes</b>: Use typemaps to convert exceptions to <tt>Result&lt;T, E&gt;</tt></li>
+</ul>
+
+<p>
+Include the exception handling library:
+</p>
+
+<div class="code"><pre>
+%include "exception.i"
+</pre></div>
+
+
+<H3><a name="Rust_smart_pointers">40.4.11 Smart Pointers</a></H3>
+
+
+<p>
+SWIG provides support for C++ smart pointers:
+</p>
+
+<div class="code"><pre>
+// SWIG interface
+%include "std_shared_ptr.i"
+
+%shared_ptr(MyClass)
+
+%inline %{
+class MyClass {
+public:
+    void method();
+};
+%}
+</pre></div>
+
+<p>
+In Rust, smart pointers are represented as opaque handles:
+</p>
+
+<div class="code"><pre>
+// Rust
+pub struct MyClassSharedPtr {
+    ptr: *mut c_void,
+}
+</pre></div>
+
+
+<H3><a name="Rust_primitive_type_mappings">40.4.12 Default Rust Primitive Type Mappings</a></H3>
+
+
+<p>
+The following table shows the default type mappings from C/C++ to Rust:
+</p>
+
+<table summary="Primitive type mappings">
+<tr>
+<th>C/C++ Type</th>
+<th>Rust Type (FFI)</th>
+<th>Rust Type (Safe)</th>
+</tr>
+
+<tr><td>bool</td><td>c_char</td><td>bool</td></tr>
+<tr><td>char</td><td>c_char</td><td>i8</td></tr>
+<tr><td>unsigned char</td><td>c_uchar</td><td>u8</td></tr>
+<tr><td>short</td><td>c_short</td><td>i16</td></tr>
+<tr><td>unsigned short</td><td>c_ushort</td><td>u16</td></tr>
+<tr><td>int</td><td>c_int</td><td>i32</td></tr>
+<tr><td>unsigned int</td><td>c_uint</td><td>u32</td></tr>
+<tr><td>long</td><td>c_long</td><td>i64</td></tr>
+<tr><td>unsigned long</td><td>c_ulong</td><td>u64</td></tr>
+<tr><td>long long</td><td>c_longlong</td><td>i64</td></tr>
+<tr><td>unsigned long long</td><td>c_ulonglong</td><td>u64</td></tr>
+<tr><td>float</td><td>c_float</td><td>f32</td></tr>
+<tr><td>double</td><td>c_double</td><td>f64</td></tr>
+<tr><td>void</td><td>-</td><td>()</td></tr>
+<tr><td>void*</td><td>*mut c_void</td><td>*mut c_void</td></tr>
+<tr><td>const void*</td><td>*const c_void</td><td>*const c_void</td></tr>
+<tr><td>char*</td><td>*mut c_char</td><td>*mut c_char</td></tr>
+<tr><td>const char*</td><td>*const c_char</td><td>&amp;CStr</td></tr>
+
+</table>
+
+
+<H3><a name="Rust_typemaps">40.4.13 Rust Typemaps</a></H3>
+
+
+<p>
+SWIG typemaps allow you to customize type conversion. Rust-specific typemaps:
+</p>
+
+<table summary="Rust typemaps">
+<tr>
+<th>Typemap</th>
+<th>Description</th>
+</tr>
+
+<tr>
+<td>rusttype</td>
+<td>Rust type visible to user (e.g., <tt>i32</tt>, <tt>String</tt>)</td>
+</tr>
+
+<tr>
+<td>rsffitype</td>
+<td>Rust FFI type (e.g., <tt>c_int</tt>, <tt>*const c_char</tt>)</td>
+</tr>
+
+<tr>
+<td>rsin</td>
+<td>Rust to C conversion code for input parameters</td>
+</tr>
+
+<tr>
+<td>rsout</td>
+<td>C to Rust conversion code for return values</td>
+</tr>
+
+<tr>
+<td>rscheck</td>
+<td>Type checking code for overloaded functions</td>
+</tr>
+
+</table>
+
+<p>
+Example custom typemap:
+</p>
+
+<div class="code"><pre>
+// SWIG interface
+%typemap(rusttype) std::string "String"
+%typemap(rsffitype) std::string "*const c_char"
+%typemap(rsin) std::string {
+    $1 = $input.as_ptr() as *const c_char;
+}
+%typemap(rsout) std::string {
+    $result = CStr::from_ptr($1).to_string_lossy().into_owned();
+}
+</pre></div>
+
+
+<H3><a name="Rust_operators">40.4.14 C++ Operator Overloading</a></H3>
+
+
+<p>
+SWIG automatically maps C++ operator overloads to Rust standard library traits.
+This allows using familiar Rust syntax for operations on wrapped C++ classes.
+</p>
+
+<p>
+<b>Supported Operator Mappings:</b>
+</p>
+
+<table summary="Operator mappings">
+<tr>
+<th>C++ Operator</th>
+<th>Rust Trait</th>
+<th>Rust Syntax</th>
+</tr>
+
+<tr><td>operator+</td><td>std::ops::Add</td><td>a + b</td></tr>
+<tr><td>operator- (binary)</td><td>std::ops::Sub</td><td>a - b</td></tr>
+<tr><td>operator- (unary)</td><td>std::ops::Neg</td><td>-a</td></tr>
+<tr><td>operator*</td><td>std::ops::Mul</td><td>a * b</td></tr>
+<tr><td>operator/</td><td>std::ops::Div</td><td>a / b</td></tr>
+<tr><td>operator%</td><td>std::ops::Rem</td><td>a % b</td></tr>
+<tr><td>operator==</td><td>std::cmp::PartialEq</td><td>a == b</td></tr>
+<tr><td>operator!=</td><td>std::cmp::PartialEq</td><td>a != b</td></tr>
+<tr><td>operator&lt;</td><td>std::cmp::PartialOrd</td><td>a &lt; b</td></tr>
+<tr><td>operator&lt;=</td><td>std::cmp::PartialOrd</td><td>a &lt;= b</td></tr>
+<tr><td>operator&gt;</td><td>std::cmp::PartialOrd</td><td>a &gt; b</td></tr>
+<tr><td>operator&gt;=</td><td>std::cmp::PartialOrd</td><td>a &gt;= b</td></tr>
+<tr><td>operator[]</td><td>std::ops::Index</td><td>a[i]</td></tr>
+<tr><td>operator&amp;</td><td>std::ops::BitAnd</td><td>a &amp; b</td></tr>
+<tr><td>operator|</td><td>std::ops::BitOr</td><td>a | b</td></tr>
+<tr><td>operator^</td><td>std::ops::BitXor</td><td>a ^ b</td></tr>
+<tr><td>operator&lt;&lt;</td><td>std::ops::Shl</td><td>a &lt;&lt; b</td></tr>
+<tr><td>operator&gt;&gt;</td><td>std::ops::Shr</td><td>a &gt;&gt; b</td></tr>
+<tr><td>operator+=</td><td>std::ops::AddAssign</td><td>a += b</td></tr>
+<tr><td>operator-=</td><td>std::ops::SubAssign</td><td>a -= b</td></tr>
+<tr><td>operator*=</td><td>std::ops::MulAssign</td><td>a *= b</td></tr>
+<tr><td>operator/=</td><td>std::ops::DivAssign</td><td>a /= b</td></tr>
+
+</table>
+
+<p>
+<b>Example:</b>
+</p>
+
+<div class="code"><pre>
+// C++
+class Vector2 {
+public:
+    Vector2(double x, double y);
+    Vector2 operator+(const Vector2&amp; rhs) const;
+    Vector2 operator*(double scalar) const;
+    bool operator==(const Vector2&amp; rhs) const;
+    double operator[](int index) const;
+};
+</pre></div>
+
+<p>
+Generates Rust code that allows:
+</p>
+
+<div class="code"><pre>
+// Rust
+let v1 = Vector2::new(1.0, 2.0);
+let v2 = Vector2::new(3.0, 4.0);
+
+let sum = v1.op_add(&amp;v2);      // Vector2 operator+
+let scaled = v1.op_deref(2.0);  // Vector2 * scalar
+let eq = v1.op_eq(&amp;v2);         // bool equality
+let x = v1.op_index(0);         // index access
+</pre></div>
+
+<p>
+<b>Note:</b> Use <tt>%rename_operators</tt> macro to rename operators to valid Rust names
+(e.g., <tt>operator+</tt> becomes <tt>op_add</tt>).
+</p>
+
+
+<H3><a name="Rust_stl_containers">40.4.15 STL Container Types</a></H3>
+
+
+<p>
+SWIG provides bindings for C++ STL containers, mapping them to equivalent Rust types:
+</p>
+
+<table summary="STL container mappings">
+<tr>
+<th>C++ Type</th>
+<th>Rust Type</th>
+<th>Include File</th>
+</tr>
+
+<tr><td>std::vector&lt;T&gt;</td><td>Vec&lt;T&gt;</td><td>std_vector.i</td></tr>
+<tr><td>std::deque&lt;T&gt;</td><td>VecDeque&lt;T&gt;</td><td>std_deque.i</td></tr>
+<tr><td>std::list&lt;T&gt;</td><td>LinkedList&lt;T&gt;</td><td>std_list.i</td></tr>
+<tr><td>std::map&lt;K,V&gt;</td><td>BTreeMap&lt;K,V&gt;</td><td>std_map.i</td></tr>
+<tr><td>std::set&lt;T&gt;</td><td>BTreeSet&lt;T&gt;</td><td>std_set.i</td></tr>
+<tr><td>std::unordered_map&lt;K,V&gt;</td><td>HashMap&lt;K,V&gt;</td><td>std_unordered_map.i</td></tr>
+<tr><td>std::unordered_set&lt;T&gt;</td><td>HashSet&lt;T&gt;</td><td>std_unordered_set.i</td></tr>
+<tr><td>std::pair&lt;T,U&gt;</td><td>(T, U)</td><td>std_pair.i</td></tr>
+<tr><td>std::string</td><td>String</td><td>std_string.i</td></tr>
+
+</table>
+
+<p>
+<b>Example with std::vector:</b>
+</p>
+
+<div class="code"><pre>
+// SWIG interface
+%include "std_vector.i"
+
+%template(IntVector) std::vector&lt;int&gt;;
+RUST_VECTOR_TRAITS(int, IntVector)
+
+%inline %{
+std::vector&lt;int&gt; createVector() {
+    return {1, 2, 3, 4, 5};
+}
+%}
+</pre></div>
+
+<p>
+<b>Rust usage:</b>
+</p>
+
+<div class="code"><pre>
+// Rust
+let vec = createVector();
+println!("Length: {}", vec.len());
+println!("First: {}", vec.getitem(0));
+
+// Convert to Rust Vec
+let rust_vec: Vec&lt;i32&gt; = vec.to_vec();
+
+// Create from Rust Vec
+let from_rust = IntVector::from_vec(vec![1, 2, 3]);
+</pre></div>
+
+<p>
+<b>std::unordered_map Example:</b>
+</p>
+
+<div class="code"><pre>
+// SWIG interface
+%include "std_unordered_map.i"
+
+%template(StringIntMap) std::unordered_map&lt;std::string, int&gt;;
+RUST_UNORDERED_MAP_TRAITS(std::string, int, StringIntMap)
+</pre></div>
+
+<p>
+<b>Helper Macros:</b>
+</p>
+
+<ul>
+<li><tt>RUST_VECTOR_TRAITS(CType, Name)</tt> - Generate Vec conversion traits</li>
+<li><tt>RUST_DEQUE_TRAITS(CType, Name)</tt> - Generate VecDeque conversion traits</li>
+<li><tt>RUST_LIST_TRAITS(CType, Name)</tt> - Generate LinkedList conversion traits</li>
+<li><tt>RUST_MAP_TRAITS(KType, VType, Name)</tt> - Generate BTreeMap conversion traits</li>
+<li><tt>RUST_SET_TRAITS(CType, Name)</tt> - Generate BTreeSet conversion traits</li>
+<li><tt>RUST_UNORDERED_MAP_TRAITS(KType, VType, Name)</tt> - Generate HashMap conversion traits</li>
+<li><tt>RUST_UNORDERED_SET_TRAITS(CType, Name)</tt> - Generate HashSet conversion traits</li>
+</ul>
+
+
+<H2><a name="Rust_advanced">40.5 Advanced Topics</a></H2>
+
+
+<H3><a name="Rust_pragma">40.5.1 Pragma Directives</a></H3>
+
+
+<p>
+SWIG pragmas for Rust:
+</p>
+
+<div class="code"><pre>
+%pragma(rust) module_code="fn helper() { }"
+%pragma(rust) module_import="use std::collections::HashMap;"
+</pre></div>
+
+
+<H3><a name="Rust_features">40.5.2 Feature Flags</a></H3>
+
+
+<p>
+Feature flags control code generation:
+</p>
+
+<div class="code"><pre>
+// Disable wrapping for a method
+%feature("ignore") MyClass::internalMethod;
+
+// Mark a class as having director support
+%feature("director") MyCallback;
+
+// Generate only FFI (no safe wrapper)
+%feature("ffi-only") MyClass::lowLevelMethod;
+</pre></div>
+
+
+<H3><a name="Rust_threading">40.5.3 Thread Safety</a></H3>
+
+
+<p>
+The generated Rust wrappers are thread-safe for read-only operations. However:
+</p>
+
+<ul>
+<li>Mutable operations (<tt>&amp;mut self</tt>) require exclusive access</li>
+<li>C++ code must be thread-safe for concurrent calls</li>
+<li>Director callbacks can be called from any C++ thread</li>
+</ul>
+
+
+</body>
+</html>

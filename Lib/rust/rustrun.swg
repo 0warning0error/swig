@@ -75,8 +75,8 @@
 
 /* std::string */
 %typemap(rusttype) std::string, const std::string & "String"
-%typemap(rsffitype) std::string, const std::string & "*mut c_void"
-%typemap(cout) std::string "std::string *"
+%typemap(rsffitype) std::string, const std::string & "*const c_char"
+%typemap(cout) std::string "const char *"
 %typemap(rsin) std::string "$1 = std::string($input);"
 %typemap(rsout) std::string "$result = $1.c_str();"
 

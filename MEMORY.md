@@ -584,3 +584,395 @@ extern "C" void *SwigDirector_CallbackBase_new_director_vtable(
 - 测试文件: `test_vtable_opt.i`
 - 生成代码验证通过
 - C++ 端只存储一个 VTable 指针
+
+---
+
+## 2026-04-13 Phase 19: 异常处理支持 ✅
+
+### 设计目标
+
+将 C++ 异常转换为 Rust 惯用的 `Result<T, SwigError>` 模式。
+
+### 实现方案
+
+**架构**:
+```
+C++ 异常 → C 错误码 + 错误消息 → Rust Result<T, SwigError>
+```
+
+**修改的文件**:
+
+1. **`Lib/rust/exception.i`** - C++ 端异常捕获和错误存储
+   - 定义错误码常量 (SWIG_RUST_RuntimeError, SWIG_RUST_IndexError 等)
+   - 线程本地错误状态存储
+   - 标准 C++ 异常类型映射
+   - `RUST_EXCEPTION_HANDLER` 宏用于包装函数
+
+2. **`Source/Modules/rust.cxx`** - Rust 端错误处理代码生成
+   - 新增 `-exception` 和 `-no-exception` 命令行选项
+   - 新增 `exception_flag` 成员变量
+   - 新增 `emitSwigError()` 函数生成 Rust 错误类型
+   - 在 `emitRustFile()` 中生成错误检查 FFI 函数
+
+### 生成的 Rust 代码
+
+**SwigErrorCode 枚举**:
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
+pub enum SwigErrorCode {
+    Ok = 0,
+    MemoryError = 1,
+    IOError = 2,
+    RuntimeError = 3,
+    IndexError = 4,
+    // ...
+}
+```
+
+**SwigError 结构体**:
+```rust
+#[derive(Debug, Clone)]
+pub struct SwigError {
+    pub code: SwigErrorCode,
+    pub message: String,
+}
+
+impl std::error::Error for SwigError {}
+impl fmt::Display for SwigError { ... }
+```
+
+**错误检查函数**:
+```rust
+impl SwigError {
+    pub fn check() -> Option<Self> { ... }
+    pub fn clear() { ... }
+}
+```
+
+**便捷宏**:
+```rust
+macro_rules! swig_check_error {
+    () => {{ ... }};
+}
+```
+
+### 使用方法
+
+**1. 在 SWIG 接口文件中启用异常处理**:
+```swig
+%include <rust/exception.i>
+%exception { RUST_EXCEPTION_HANDLER }
+```
+
+**2. 生成的 Rust 代码可以检查错误**:
+```rust
+let result = obj.method_that_may_throw();
+if let Some(error) = SwigError::check() {
+    println!("Error: {}", error);
+}
+```
+
+**3. 使用 Result 模式**:
+```rust
+fn safe_call() -> Result<(), SwigError> {
+    obj.method_that_may_throw();
+    swig_check_error!()
+}
+```
+
+### 异常类型映射
+
+| C++ 异常类型 | Rust 错误码 |
+|-------------|------------|
+| `std::bad_alloc` | `MemoryError` |
+| `std::runtime_error` | `RuntimeError` |
+| `std::invalid_argument` | `ValueError` |
+| `std::out_of_range` | `IndexError` |
+| `std::overflow_error` | `OverflowError` |
+| 其他 `std::exception` | `RuntimeError` |
+| 未知异常 | `UnknownError` |
+
+### 测试验证
+
+- 测试文件: `test_exception.i`
+- 编译通过
+- 生成正确的 Rust 代码包含 SwigError 类型
+
+---
+
+## 2026-04-14 本次会话修复进度
+
+### 已完成的修复
+
+#### 1. 添加 `cleanRustName()` 函数 ✅
+- **目的**: 清理 Rust 标识符中的无效字符（如 `::`、`<`、`>`、`*`、`&` 等）
+- **位置**: `Source/Modules/rust.cxx` 第 1232 行附近
+- **功能**: 将 `std::string` 转换为 `std_string`，处理模板参数等
+
+#### 2. 修复 `emitOverloadSuffix()` ✅
+- **问题**: 生成的后缀包含 `std::string`，导致无效的 Rust 标识符
+- **修复**: 
+  - 特殊处理 `std::string` 类型，返回 `_string` 而非 `_std::string`
+  - 对其他复杂类型使用 `cleanRustName()` 清理
+
+#### 3. 修复参数名问题 ✅
+- **问题**: 静态成员变量参数名如 `BasicTypes::static_counter` 是无效的 Rust 语法
+- **修复**: 在 `emitRustSafeWrapper()` 和 `emitRustConstructor()` 中使用 `cleanRustName()` 清理参数名
+
+#### 4. 修复构造函数命名问题 ✅
+- **问题**: 重载构造函数名如 `new_std::string` 包含无效字符
+- **修复**: 使用 `cleanRustName()` 清理构造函数后缀
+
+### 待修复的问题（通过 rustc 检测）
+
+运行 `rustc test_swig.rs` 发现以下编译错误：
+
+#### 1. FFI 函数重复声明
+```
+error[E0428]: the name `Rust_global_check_status__SWIG_0` is defined multiple times
+```
+- **原因**: 全局函数 `global_check_status` 的 FFI 声明被重复生成
+- **位置**: `test_swig.rs` 第 366 行和 370 行
+
+#### 2. Trait 方法重复定义
+```
+error[E0428]: the name `get_value` is defined multiple times
+```
+- **原因**: `OverloadTestTrait` 中 const 和非 const 版本的 `get_value` 方法名相同
+- **位置**: `test_swig.rs` 第 618-619 行
+- **解决方案**: 需要修改 `emitRustTrait()` 中的方法计数逻辑，为 const 方法添加 `_const` 后缀
+
+#### 3. 全局函数重复定义
+```
+error[E0428]: the name `global_check_status_int` is defined multiple times
+```
+- **原因**: 全局函数的包装被重复生成
+- **位置**: `test_swig.rs` 第 1285 行和 1289 行
+
+### 其他待修复问题
+
+#### 4. Director trait 方法名问题
+- **问题**: 方法名如 `on_message_std::string` 包含 `::`
+- **影响**: 无效的 Rust 标识符
+- **位置**: `CallbackTestDirector` trait
+
+#### 5. VTable 字段名问题
+- **问题**: 字段名如 `on_message_std::string` 包含 `::`
+- **影响**: 无效的 Rust 标识符
+- **位置**: `CallbackTestVTable` struct
+
+#### 6. 未定义类型 `std_string`
+- **问题**: 代码使用了 `std_string` 类型但未定义
+- **影响**: 编译错误
+- **解决方案**: 需要生成 `std_string` 类型定义或使用 `String` 类型
+
+---
+
+## 解决方案分析 (2026-04-14)
+
+### 问题 1 & 3: FFI 函数重复声明 & 全局函数重复定义
+
+**根因分析**：
+- 可能是同一个函数节点被处理了两次（通过不同的 handler 路径）
+- 或者缺少"已处理"标记的去重机制
+
+**解决方案**：
+1. 在 `functionWrapper()` 中添加 `wrap:name` 缓存，跳过已处理的函数
+2. 检查是否有多个 handler 同时触发了同一函数的处理
+
+---
+
+### 问题 2: Trait 中 const/non-const 方法重复
+
+**根因分析**：
+```cpp
+// test_swig.h
+int get_value();           // 非const
+int get_value() const;     // const版本，返回双倍值
+```
+
+当前 `method_counts` 使用 `sym:name` 作为 key，两者都是 `get_value`，导致：
+- `total_count = 2`（认为有 2 个重载）
+- `emitOverloadSuffix(params)` 返回空字符串（参数列表相同）
+- 结果：两个方法都叫 `get_value`，产生 Rust 编译错误
+
+**设计决策：发出警告，要求用户自己重命名**
+
+理由：
+1. **用户控制权**：用户对 const/non-const 版本可能有不同的语义需求
+2. **避免意外命名**：自动添加 `_const` 后缀可能产生不直观的方法名
+3. **与 SWIG 惯例一致**：其他语言绑定也经常要求用户显式处理复杂重载
+
+**实现方案**：
+```
+Warning: Const/non-const overload detected for 'OverloadTest::get_value'
+- Non-const version: get_value()
+- Const version: get_value() const
+In Rust, trait methods cannot be distinguished by self type alone.
+Please use %rename to give unique names, e.g.:
+  %rename(get_value_const) OverloadTest::get_value() const;
+```
+
+**修改位置**：`emitRustTrait()` 中添加检测和警告逻辑
+
+---
+
+### 问题 4 & 5: Director trait/VTable 方法名包含 `::`
+
+**根因分析**：
+`classDirectorMethod()` 中生成的后缀如 `_std::string` 包含非法字符
+
+**解决方案**：
+- 在 `classDirectorMethod()` 中，对生成的后缀调用 `cleanRustName()` 进行清理
+
+---
+
+### 问题 6: 未定义类型 `std_string`
+
+**根因分析**：
+代码中生成了 `std_string` 类型（如 `*mut std_string`），但没有对应的类型定义
+
+**解决方案**：
+1. **添加类型定义**：生成一个 `std_string` 结构体包装 `std::string`
+2. **或者改用 String**：修改类型映射，直接使用 Rust 的 `String` 类型
+3. **或者使用不透明指针**：用 `*mut c_void` 作为不透明句柄
+
+---
+
+### 推荐的修复顺序
+
+1. **先实现 const/non-const 重载警告机制**（问题 2）- 让用户能明确处理
+2. **然后修复 FFI/函数重复**（问题 1、3）- 需要调试确认根因
+3. **再修复 Director 命名**（问题 4、5）- 在已有 `cleanRustName` 基础上应用
+4. **最后处理 `std_string` 类型**（问题 6）- 设计决策
+
+
+
+---
+
+## 2026-04-14 本次会话修复记录 ✅
+
+### 已完成的修复
+
+#### 1. FFI 函数重复声明 ✅
+- **问题**: `Rust_global_check_status__SWIG_0` 定义了两次
+- **原因**: 全局函数在命名空间外和 `MYTEST` 命名空间内都有定义
+- **修复**: 
+  - 添加 `generated_ffi_names` Hash 跟踪已生成的 FFI 函数
+  - 在 `emitRustFFIDeclaration()` 中添加去重检查
+
+#### 2. 全局函数重复定义 ✅
+- **问题**: `global_check_status_int` 定义了两次
+- **原因**: 同上，命名空间内外都有同名函数
+- **修复**: 
+  - 添加 `generated_wrapper_names` Hash 跟踪已生成的包装函数
+  - 在 `emitRustSafeWrapper()` 中添加去重检查
+
+#### 3. const/non-const 方法重复 ✅
+- **问题**: `get_value()` 有 const 和非 const 版本，生成两个同名方法
+- **修复**: 
+  - 修复 `SwigType_isconst(decl)` 检测逻辑（之前错误地检查字符串）
+  - 添加 `generated_signatures` Hash 跟踪已生成的方法签名
+  - 当遇到相同签名的 const/non-const 重载时，**只保留第一个版本**
+
+#### 4. Director/VTable 方法名中的 `::` 字符 ✅
+- **问题**: 方法名如 `on_message_std::string` 包含无效的 `::` 字符
+- **修复**: 
+  - 对 `callback_suffix`、`vtable_field_suffix`、`trait_method_suffix` 使用 `cleanRustName()` 清理
+
+#### 5. `std_string` 未定义类型 ✅
+- **问题**: 代码中生成了 `std_string` 类型但未定义
+- **修复**: 
+  - 在 `getRustUserType()` 中添加 `std::string` 的特殊处理
+  - 当类型是 `std::string` 时返回 `String` 而非 `std_string`
+
+---
+
+## 当前 SWIG Rust 代码生成问题汇总 (2026-04-14)
+
+修复了上述问题后，还有以下新问题需要处理：
+
+### 1. String 类型冲突 🔴 P0
+
+**问题**:
+```rust
+fn whoami(&self) -> String {
+    String { ptr: unsafe { ffi::Rust_Base_whoami__SWIG_0(self.ptr) } }
+}
+```
+
+`String` 是 Rust 标准库类型，不能用作结构体包装器。
+
+**解决方案**:
+- 生成一个自定义类型如 `SwigString` 包装 `std::string`
+- 或者对于返回 `std::string` 的方法，直接返回 `String`（需要正确的类型转换逻辑）
+
+**位置**: `emitRustImpl()` 中处理返回值类型的逻辑
+
+---
+
+### 2. 继承关系未正确实现 🔴 P0
+
+**问题**:
+```rust
+pub trait DerivedTrait: BaseTrait { ... }
+impl DerivedTrait for Derived { ... }  // 错误：Derived 没有实现 BaseTrait
+```
+
+**原因**: `Derived` 结构体只持有自己的指针，没有同时实现 `BaseTrait`
+
+**解决方案**:
+- 为派生类同时生成基类 trait 的实现
+- 或者使用 Deref 模式让 `Derived` 可以当作 `Base` 使用
+
+**位置**: `emitRustImpl()` 中处理继承关系
+
+---
+
+### 3. bool 类型转换问题 🟡 P1
+
+**问题**:
+```rust
+// test_swig.rs:504
+unsafe { ffi::Rust_BasicTypes_bool_val_set__SWIG_0(self.ptr, bool_val) }
+// 错误：expected `u8`, found `bool`
+```
+
+FFI 函数期望 `u8` (c_uchar)，但传入了 Rust `bool`。
+
+**解决方案**:
+- 在生成调用代码时添加类型转换：`bool_val as u8` 或 `u8::from(bool_val)`
+- 或者修改 typemap 让 FFI 层使用 `bool` 类型
+
+**位置**: `emitRustImpl()` 中生成 FFI 调用的逻辑
+
+---
+
+### 修复优先级
+
+| 优先级 | 问题 | 影响 |
+|--------|------|------|
+| P0 | String 类型冲突 | 编译错误 |
+| P0 | 继承关系未实现 | 编译错误 |
+| P1 | bool 类型转换 | 编译错误 |
+
+---
+
+## 最后更新
+2026-04-14 (修复 String 冲突、继承实现、bool 转换、静态方法、字符串参数转换)
+
+### 本次会话修复的问题 ✅
+
+1. **String 类型冲突** - 添加 `SwigString` 类型定义，实现 `From<String>` 和 `Into<String>` trait
+2. **继承关系未正确实现** - 为派生类生成基类 trait 实现，使用 Deref 模式
+3. **bool 类型转换** - 参数添加 `as u8`，返回值添加 `!= 0` 转换
+4. **静态方法出现在 trait 中** - 修改 emitRustTrait/emitRustImpl 排除静态方法
+5. **字符串参数转换** - 对 `const std::string&` 和 `&str` 添加 `.as_ptr() as *const c_char` 转换
+6. **类型映射改进** - `getRustUserType()` 正确处理 `std::string`、`const std::string&`、`char*`
+
+### 待后续修复的问题
+
+1. **`const char*` 返回类型** - typemap 返回 `c_char` 而非指针类型（需深入调查 SWIG 类型匹配）
+2. **枚举参数转换** - 需要将 Rust 枚举转换为底层 `i32` 传给 FFI
+

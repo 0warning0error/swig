@@ -6,6 +6,7 @@
 
 %include <rusttype.swg>
 %include <rustrun.swg>
+%include <rustexception.swg>
 
 /* Code insertion directives for Rust */
 #define %rust_import(...) %insert(rust_imports) %{__VA_ARGS__%}

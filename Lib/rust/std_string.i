@@ -39,15 +39,14 @@ class string;
 // The Rust side converts String to *mut c_char (via CString::into_raw)
 %typemap(in, canthrow=1) string
 %{ if (!$input) {
-    SWIG_RustSetPendingException("NullPointerException", "null string");
-    return $null;
+    throw std::invalid_argument("null string");
    }
    $1.assign($input); %}
 
 // Output: C++ std::string -> Rust String
 // Return the C string pointer, Rust will convert to String
 %typemap(out) string
-%{ $result = SWIG_RustStringCallback($1.c_str()); %}
+%{ $result = $1.c_str(); %}
 
 // Director input: C++ -> Rust callback
 %typemap(directorin) string
@@ -56,8 +55,8 @@ class string;
 // Director output: Rust callback -> C++
 %typemap(directorout, canthrow=1) string
 %{ if (!$input) {
-    SWIG_RustSetPendingException("NullPointerException", "null string");
-    return $null;
+    SWIG_RustSetError(SWIG_RUST_NullReference, "null string");
+    Swig::DirectorException::raise("null string");
    }
    $result.assign($input); %}
 
@@ -87,8 +86,7 @@ class string;
 // Input: Rust &str -> C++ const std::string&
 %typemap(in, canthrow=1) const string &
 %{ if (!$input) {
-    SWIG_RustSetPendingException("NullPointerException", "null string");
-    return $null;
+    throw std::invalid_argument("null string");
    }
    $*1_ltype $1_str($input);
    $1 = &$1_str; %}
@@ -96,7 +94,7 @@ class string;
 // Output: C++ const std::string& -> Rust String (converted to owned)
 // Note: We can't safely return &str pointing to C++ memory, so we return String
 %typemap(out) const string &
-%{ $result = SWIG_RustStringCallback($1->c_str()); %}
+%{ $result = $1->c_str(); %}
 
 // Director input
 %typemap(directorin) const string &
@@ -105,8 +103,8 @@ class string;
 // Director output (warning: thread-unsafe for static local)
 %typemap(directorout, canthrow=1, warning=SWIGWARN_TYPEMAP_THREAD_UNSAFE_MSG) const string &
 %{ if (!$input) {
-    SWIG_RustSetPendingException("NullPointerException", "null string");
-    return $null;
+    SWIG_RustSetError(SWIG_RUST_NullReference, "null string");
+    Swig::DirectorException::raise("null string");
    }
    /* possible thread/reentrant code problem */
    static $*1_ltype $1_str;
@@ -139,7 +137,7 @@ class string;
 %{ $1 = ($1_ltype)$input; %}
 
 %typemap(out) string *
-%{ $result = $input ? SWIG_RustStringCallback($input->c_str()) : NULL; %}
+%{ $result = $input ? $input->c_str() : nullptr; %}
 
 /* -----------------------------------------------------------------------------
  * const std::string* (const pointer)
@@ -153,18 +151,16 @@ class string;
 %{ $1 = ($1_ltype)$input; %}
 
 %typemap(out) const string *
-%{ $result = $input ? SWIG_RustStringCallback($input->c_str()) : NULL; %}
+%{ $result = $input ? $input->c_str() : nullptr; %}
 
 /* -----------------------------------------------------------------------------
  * Exception handling
  * ----------------------------------------------------------------------------- */
 
 %typemap(throws, canthrow=1) string
-%{ SWIG_RustSetPendingException("RuntimeException", $1.c_str());
-   return $null; %}
+%{ throw std::runtime_error($1.c_str()); %}
 
 %typemap(throws, canthrow=1) const string &
-%{ SWIG_RustSetPendingException("RuntimeException", $1->c_str());
-   return $null; %}
+%{ throw std::runtime_error($1->c_str()); %}
 
 } // namespace std

@@ -73,12 +73,10 @@
  * Standard library types
  * ----------------------------------------------------------------------------- */
 
-/* std::string */
-%typemap(rusttype) std::string, const std::string & "String"
-%typemap(rsffitype) std::string, const std::string & "*const c_char"
-%typemap(cout) std::string "const char *"
-%typemap(rsin) std::string "$1 = std::string($input);"
-%typemap(rsout) std::string "$result = $1.c_str();"
+/* Note: std::string typemaps are defined in std_string.i
+ * Do not define them here to avoid conflicts.
+ * Users should %include <rust/std_string.i> for proper std::string support.
+ */
 
 /* std::vector - simplified, will need more detailed implementation */
 %typemap(rusttype) std::vector<SWIGTYPE> "Vec<$1_type>"

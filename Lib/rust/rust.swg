@@ -40,6 +40,9 @@
  * These macros rename C++ operators to valid Rust method names.
  * Usage: %rename_operators at the top of your interface file
  * ----------------------------------------------------------------------------- */
+%insert("rustcode") %{
+#![allow(non_camel_case_types, non_snake_case, dead_code)]
+%}
 
 %define %rename_operators
 %rename(op_add) operator+;

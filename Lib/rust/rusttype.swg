@@ -106,15 +106,15 @@
 %typemap(in) unsigned int                         "$1 = ($1_ltype)$input;"
 %typemap(out) unsigned int                        "$result = $1;"
 
-/* long */
-%typemap(rusttype) long, const long &               "i64"
+/* long - platform dependent, use c_long for correct size */
+%typemap(rusttype) long, const long &               "c_long"
 %typemap(rsffitype) long, const long &              "c_long"
 %typemap(cout) long                                 "long"
 %typemap(in) long                                 "$1 = ($1_ltype)$input;"
 %typemap(out) long                                "$result = $1;"
 
-/* unsigned long */
-%typemap(rusttype) unsigned long, const unsigned long & "u64"
+/* unsigned long - platform dependent, use c_ulong for correct size */
+%typemap(rusttype) unsigned long, const unsigned long & "c_ulong"
 %typemap(rsffitype) unsigned long, const unsigned long & "c_ulong"
 %typemap(cout) unsigned long                        "unsigned long"
 %typemap(in) unsigned long                        "$1 = ($1_ltype)$input;"
@@ -161,19 +161,45 @@
 %typemap(rsffitype) void                            ""
 %typemap(cout) void                                 "void"
 
-/* size_t */
+/* size_t - platform dependent pointer-sized unsigned */
 %typemap(rusttype) size_t, const size_t &           "usize"
-%typemap(rsffitype) size_t, const size_t &          "c_ulong"
+%typemap(rsffitype) size_t, const size_t &          "usize"
 %typemap(cout) size_t                               "size_t"
 %typemap(in) size_t                               "$1 = ($1_ltype)$input;"
 %typemap(out) size_t                              "$result = $1;"
 
-/* ptrdiff_t */
+/* ptrdiff_t - platform dependent pointer-sized signed */
 %typemap(rusttype) ptrdiff_t, const ptrdiff_t &     "isize"
-%typemap(rsffitype) ptrdiff_t, const ptrdiff_t &    "c_long"
+%typemap(rsffitype) ptrdiff_t, const ptrdiff_t &    "isize"
 %typemap(cout) ptrdiff_t                            "ptrdiff_t"
 %typemap(in) ptrdiff_t                            "$1 = ($1_ltype)$input;"
 %typemap(out) ptrdiff_t                           "$result = $1;"
+
+/* wchar_t - wide character
+ * Note: wchar_t is 2 bytes on Windows (UTF-16), 4 bytes on Unix (UTF-32)
+ * Rust doesn't have c_wchar in std::os::raw, so we use:
+ * - u16 on Windows (matches wchar_t size)
+ * - u32 on Unix (matches wchar_t size)
+ * For cross-platform code, use std::wstring instead.
+ */
+%typemap(rusttype) wchar_t, const wchar_t &         "u16"
+%typemap(rsffitype) wchar_t, const wchar_t &        "u16"
+%typemap(cout) wchar_t                              "wchar_t"
+%typemap(in) wchar_t                              "$1 = ($1_ltype)$input;"
+%typemap(out) wchar_t                             "$result = $1;"
+
+/* wchar_t* - wide string pointer (C-style) */
+%typemap(rusttype) wchar_t *                        "*mut u16"
+%typemap(rsffitype) wchar_t *                       "*mut u16"
+%typemap(cout) wchar_t *                            "wchar_t *"
+%typemap(in) wchar_t *                            "$1 = ($1_ltype)$input;"
+%typemap(out) wchar_t *                           "$result = $1;"
+
+%typemap(rusttype) const wchar_t *                  "*const u16"
+%typemap(rsffitype) const wchar_t *                 "*const u16"
+%typemap(cout) const wchar_t *                      "const wchar_t *"
+%typemap(in) const wchar_t *                      "$1 = ($1_ltype)$input;"
+%typemap(out) const wchar_t *                     "$result = $1;"
 
 /* -----------------------------------------------------------------------------
  * Pointer types

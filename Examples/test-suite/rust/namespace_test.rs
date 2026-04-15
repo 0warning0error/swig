@@ -171,55 +171,6 @@ mod ffi {
 
 use std::os::raw::*;
 
-/// Wrapper for C++ std::string
-/// 
-/// This type provides bidirectional conversion between C++ std::string
-/// and Rust's String type. Use `.into()` to convert to String.
-pub struct SwigString {
-    ptr: *mut c_void,
-}
-
-impl SwigString {
-    /// Create a new SwigString from a Rust String
-    pub fn new(s: &str) -> Self {
-        // Note: This requires FFI support - placeholder implementation
-        // In practice, this will be called from generated code
-        SwigString { ptr: std::ptr::null_mut() }
-    }
-    
-    /// Convert to Rust String (takes ownership)
-    pub fn into_string(self) -> String {
-        // The actual conversion is done in generated method wrappers
-        // which use CStr::from_ptr to convert C strings
-        String::new()
-    }
-}
-
-impl Drop for SwigString {
-    fn drop(&mut self) {
-        // C++ std::string destructor is called via FFI
-        // This is handled by the generated wrapper code
-    }
-}
-
-impl From<SwigString> for String {
-    fn from(s: SwigString) -> String {
-        s.into_string()
-    }
-}
-
-impl std::fmt::Display for SwigString {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SwigString(...)")
-    }
-}
-
-impl std::fmt::Debug for SwigString {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SwigString {{ ptr: {:?} }}", self.ptr)
-    }
-}
-
 // Safe wrapper functions
 
 pub mod Outer {

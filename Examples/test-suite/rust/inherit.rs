@@ -54,7 +54,7 @@ pub struct CBase {
 
 /// Trait defining the interface for C++ class CBase
 pub trait CBaseTrait {
-    fn Foo(&self) -> c_char;
+    fn Foo(&mut self) -> *const c_char;
 }
 
 impl CBase {
@@ -84,7 +84,7 @@ impl CBase {
 }
 
 impl CBaseTrait for CBase {
-    fn Foo(&self) -> c_char {
+    fn Foo(&mut self) -> *const c_char {
         unsafe { ffi::Rust_CBase_Foo__SWIG_0(self.ptr) }
     }
 }
@@ -139,5 +139,12 @@ impl CDerived {
 }
 
 impl CDerivedTrait for CDerived {
+}
+
+// Base trait implementation for inheritance
+impl CBaseTrait for CDerived {
+    fn Foo(&mut self) -> c_char {
+        unsafe { ffi::Rust_CBase_Foo__SWIG_0(self.ptr) }
+    }
 }
 

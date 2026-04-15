@@ -117,6 +117,70 @@ use std::os::raw::*;
 
 // Safe wrapper functions
 
+pub fn bar1_foo1(x: foo1) {
+    unsafe { ffi::Rust_bar1__SWIG_0(x as i32) }
+}
+
+pub fn bar2_foo2(x: foo2) {
+    unsafe { ffi::Rust_bar2__SWIG_0(x as i32) }
+}
+
+pub fn bar3_foo3(x: foo3) {
+    unsafe { ffi::Rust_bar3__SWIG_0(x) }
+}
+
+pub fn GlobalInstance_set_int(GlobalInstance: i32) {
+    unsafe { ffi::Rust_GlobalInstance_set__SWIG_0(GlobalInstance) }
+}
+
+pub fn GlobalInstance_get() -> i32 {
+    unsafe { ffi::Rust_GlobalInstance_get__SWIG_0() }
+}
+
+pub fn enumInstance_set_Exclamation(enumInstance: Exclamation) {
+    unsafe { ffi::Rust_enumInstance_set__SWIG_0(enumInstance as i32) }
+}
+
+pub fn enumInstance_get() -> enum Exclamation {
+    unsafe { std::mem::transmute::<i32, enum Exclamation>(ffi::Rust_enumInstance_get__SWIG_0()) }
+}
+
+pub fn Slap_set_ContainYourself(Slap: ContainYourself) {
+    unsafe { ffi::Rust_Slap_set__SWIG_0(Slap as i32) }
+}
+
+pub fn Slap_get() -> enum ContainYourself {
+    unsafe { std::mem::transmute::<i32, enum ContainYourself>(ffi::Rust_Slap_get__SWIG_0()) }
+}
+
+pub fn Mine_set_ContainYourself(Mine: ContainYourself) {
+    unsafe { ffi::Rust_Mine_set__SWIG_0(Mine as i32) }
+}
+
+pub fn Mine_get() -> enum ContainYourself {
+    unsafe { std::mem::transmute::<i32, enum ContainYourself>(ffi::Rust_Mine_get__SWIG_0()) }
+}
+
+pub fn Thigh_set_ContainYourself(Thigh: ContainYourself) {
+    unsafe { ffi::Rust_Thigh_set__SWIG_0(Thigh as i32) }
+}
+
+pub fn Thigh_get() -> enum ContainYourself {
+    unsafe { std::mem::transmute::<i32, enum ContainYourself>(ffi::Rust_Thigh_get__SWIG_0()) }
+}
+
+pub fn pThigh_get() -> *mut c_void {
+    unsafe { std::mem::transmute::<i32, *mut c_void>(ffi::Rust_pThigh_get__SWIG_0()) }
+}
+
+pub fn arrayContainYourself_set_enum_ContainYourself(arrayContainYourself: &[enum ContainYourself [3]; 3]) {
+    unsafe { ffi::Rust_arrayContainYourself_set__SWIG_0(arrayContainYourself as i32) }
+}
+
+pub fn arrayContainYourself_get() -> &[enum ContainYourself [3]; 3] {
+    unsafe { std::mem::transmute::<i32, &[enum ContainYourself [3]; 3]>(ffi::Rust_arrayContainYourself_get__SWIG_0()) }
+}
+
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum foo1 {
@@ -131,18 +195,6 @@ pub enum foo3 {
     FGHJI = 1,
 }
 
-pub fn bar1_foo1(x: foo1) {
-    unsafe { ffi::Rust_bar1__SWIG_0(x) }
-}
-
-pub fn bar2_foo2(x: foo2) {
-    unsafe { ffi::Rust_bar2__SWIG_0(x) }
-}
-
-pub fn bar3_foo3(x: foo3) {
-    unsafe { ffi::Rust_bar3__SWIG_0(x) }
-}
-
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum sad {
@@ -153,16 +205,10 @@ pub enum sad {
 pub const globalinstance1: i32 = 0;
 pub const globalinstance2: i32 = 1;
 pub const globalinstance3: i32 = 30;
-pub fn GlobalInstance_set_int(GlobalInstance: i32) {
-    unsafe { ffi::Rust_GlobalInstance_set__SWIG_0(GlobalInstance) }
-}
-
-pub fn GlobalInstance_get() -> i32 {
-    unsafe { ffi::Rust_GlobalInstance_get__SWIG_0() }
-}
-
 pub const AnonEnum1: i32 = 0;
 pub const AnonEnum2: i32 = 100;
+pub const BAR1: i32 = 0;
+pub const BAR2: i32 = 1;
 /// Rust wrapper for C++ class Foo
 /// Holds a pointer to the underlying C++ object.
 pub struct Foo {
@@ -174,8 +220,6 @@ pub struct Foo {
 pub trait FooTrait {
 }
 
-pub const BAR1: i32 = 0;
-pub const BAR2: i32 = 1;
 impl Foo {
     pub fn set_e(&self, e: i32) {
         unsafe { ffi::Rust_Foo_e_set__SWIG_0(self.ptr, e) }
@@ -217,6 +261,8 @@ impl Foo {
 impl FooTrait for Foo {
 }
 
+pub const Phoo: i32 = +50;
+pub const Char: i32 = 'a';
 /// Rust wrapper for C++ class iFoo
 /// Holds a pointer to the underlying C++ object.
 pub struct iFoo {
@@ -228,8 +274,6 @@ pub struct iFoo {
 pub trait iFooTrait {
 }
 
-pub const Phoo: i32 = +50;
-pub const Char: i32 = 'a';
 impl iFoo {
     pub fn set_e(&self, e: i32) {
         unsafe { ffi::Rust_iFoo_e_set__SWIG_0(self.ptr, e) }
@@ -279,55 +323,11 @@ pub enum Exclamation {
     me,
 }
 
-pub fn enumInstance_set_Exclamation(enumInstance: Exclamation) {
-    unsafe { ffi::Rust_enumInstance_set__SWIG_0(enumInstance) }
-}
-
-pub fn enumInstance_get() -> enum Exclamation {
-    unsafe { ffi::Rust_enumInstance_get__SWIG_0() }
-}
-
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ContainYourself {
     slap = 10,
     mine,
     thigh,
-}
-
-pub fn Slap_set_ContainYourself(Slap: ContainYourself) {
-    unsafe { ffi::Rust_Slap_set__SWIG_0(Slap) }
-}
-
-pub fn Slap_get() -> enum ContainYourself {
-    unsafe { ffi::Rust_Slap_get__SWIG_0() }
-}
-
-pub fn Mine_set_ContainYourself(Mine: ContainYourself) {
-    unsafe { ffi::Rust_Mine_set__SWIG_0(Mine) }
-}
-
-pub fn Mine_get() -> enum ContainYourself {
-    unsafe { ffi::Rust_Mine_get__SWIG_0() }
-}
-
-pub fn Thigh_set_ContainYourself(Thigh: ContainYourself) {
-    unsafe { ffi::Rust_Thigh_set__SWIG_0(Thigh) }
-}
-
-pub fn Thigh_get() -> enum ContainYourself {
-    unsafe { ffi::Rust_Thigh_get__SWIG_0() }
-}
-
-pub fn pThigh_get() -> *mut c_void {
-    unsafe { ffi::Rust_pThigh_get__SWIG_0() }
-}
-
-pub fn arrayContainYourself_set_enum ContainYourself(arrayContainYourself: &[enum ContainYourself [3]; 3]) {
-    unsafe { ffi::Rust_arrayContainYourself_set__SWIG_0(arrayContainYourself) }
-}
-
-pub fn arrayContainYourself_get() -> &[enum ContainYourself [3]; 3] {
-    unsafe { ffi::Rust_arrayContainYourself_get__SWIG_0() }
 }
 

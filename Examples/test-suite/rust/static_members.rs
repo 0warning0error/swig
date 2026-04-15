@@ -154,16 +154,13 @@ pub struct StaticClass {
 
 /// Trait defining the interface for C++ class StaticClass
 pub trait StaticClassTrait {
-    fn get_static_int(&mut self) -> i32;
-    fn set_static_int(&mut self, v: i32);
-    fn add_static(&mut self, v: i32) -> i32;
-    fn get_instance(&mut self) -> i32;
+    fn get_instance(&self) -> i32;
     fn set_instance(&mut self, v: i32);
 }
 
 impl StaticClass {
-    pub fn StaticClass_static_int_set_int(StaticClass::static_int: i32) {
-        unsafe { ffi::Rust_StaticClass_static_int_set__SWIG_0(StaticClass::static_int) }
+    pub fn StaticClass_static_int_set_int(StaticClass_static_int: i32) {
+        unsafe { ffi::Rust_StaticClass_static_int_set__SWIG_0(StaticClass_static_int) }
     }
 }
 
@@ -174,8 +171,8 @@ impl StaticClass {
 }
 
 impl StaticClass {
-    pub fn StaticClass_static_double_set_f64(StaticClass::static_double: f64) {
-        unsafe { ffi::Rust_StaticClass_static_double_set__SWIG_0(StaticClass::static_double) }
+    pub fn StaticClass_static_double_set_f64(StaticClass_static_double: f64) {
+        unsafe { ffi::Rust_StaticClass_static_double_set__SWIG_0(StaticClass_static_double) }
     }
 }
 
@@ -268,16 +265,7 @@ impl StaticClass {
 }
 
 impl StaticClassTrait for StaticClass {
-    fn get_static_int(&mut self) -> i32 {
-        unsafe { ffi::Rust_get_static_int__SWIG_0(self.ptr) }
-    }
-    fn set_static_int(&mut self, v: i32) {
-        unsafe { ffi::Rust_set_static_int__SWIG_0(self.ptr, v) }
-    }
-    fn add_static(&mut self, v: i32) -> i32 {
-        unsafe { ffi::Rust_add_static__SWIG_0(self.ptr, v) }
-    }
-    fn get_instance(&mut self) -> i32 {
+    fn get_instance(&self) -> i32 {
         unsafe { ffi::Rust_StaticClass_get_instance__SWIG_0(self.ptr) }
     }
     fn set_instance(&mut self, v: i32) {

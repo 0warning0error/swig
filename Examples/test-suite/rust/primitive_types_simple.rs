@@ -64,11 +64,11 @@ mod ffi {
     }
 
     extern "C" {
-        pub fn Rust_test_size_t__SWIG_0(jarg1: c_ulong) -> c_ulong;
+        pub fn Rust_test_size_t__SWIG_0(jarg1: usize) -> usize;
     }
 
     extern "C" {
-        pub fn Rust_test_ptrdiff_t__SWIG_0(jarg1: c_long) -> c_long;
+        pub fn Rust_test_ptrdiff_t__SWIG_0(jarg1: isize) -> isize;
     }
 
     extern "C" {
@@ -90,7 +90,7 @@ use std::os::raw::*;
 // Safe wrapper functions
 
 pub fn test_bool_bool(b: bool) -> bool {
-    unsafe { ffi::Rust_test_bool__SWIG_0(b) }
+    unsafe { ffi::Rust_test_bool__SWIG_0(b as u8) != 0 }
 }
 
 pub fn test_schar_str(c: i8) -> i8 {
@@ -105,7 +105,7 @@ pub fn test_short_short(s: i16) -> i16 {
     unsafe { ffi::Rust_test_short__SWIG_0(s) }
 }
 
-pub fn test_ushort_unsigned short(s: u16) -> u16 {
+pub fn test_ushort_unsigned_short(s: u16) -> u16 {
     unsafe { ffi::Rust_test_ushort__SWIG_0(s) }
 }
 
@@ -117,11 +117,11 @@ pub fn test_uint_int(i: u32) -> u32 {
     unsafe { ffi::Rust_test_uint__SWIG_0(i) }
 }
 
-pub fn test_long_long(l: i64) -> i64 {
+pub fn test_long_long(l: c_long) -> c_long {
     unsafe { ffi::Rust_test_long__SWIG_0(l) }
 }
 
-pub fn test_ulong_long(l: u64) -> u64 {
+pub fn test_ulong_long(l: c_ulong) -> c_ulong {
     unsafe { ffi::Rust_test_ulong__SWIG_0(l) }
 }
 

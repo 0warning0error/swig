@@ -64,18 +64,6 @@ mod ffi {
     }
 
     extern "C" {
-        pub fn Rust_foo__SWIG_0() -> *mut c_char;
-    }
-
-    extern "C" {
-        pub fn Rust_foo__SWIG_1(jarg1: c_int) -> *mut c_char;
-    }
-
-    extern "C" {
-        pub fn Rust_foo__SWIG_2(jarg1: c_double) -> *mut c_char;
-    }
-
-    extern "C" {
         pub fn Rust_foo__SWIG_3(jarg1: *mut c_char) -> *mut c_char;
     }
 
@@ -329,6 +317,58 @@ use std::os::raw::*;
 
 // Safe wrapper functions
 
+pub fn blah_f64(arg1: f64) -> String {
+    unsafe { ffi::Rust_blah__SWIG_0(arg1) }
+}
+
+pub fn fbool_bool(b: bool) -> bool {
+    unsafe { ffi::Rust_fbool__SWIG_0(b as u8) != 0 }
+}
+
+pub fn fint_int(arg1: i32) -> String {
+    unsafe { ffi::Rust_fint__SWIG_0(arg1) }
+}
+
+pub fn fdouble_f64(arg1: f64) -> String {
+    unsafe { ffi::Rust_fdouble__SWIG_0(arg1) }
+}
+
+pub fn num_int(arg1: i32) -> String {
+    unsafe { ffi::Rust_num__SWIG_0(arg1) }
+}
+
+pub fn fid_int_int(arg1: i32, arg2: i32) -> String {
+    unsafe { ffi::Rust_fid__SWIG_0(arg1, arg2) }
+}
+
+pub fn sizeof_long() -> i32 {
+    unsafe { ffi::Rust_sizeof_long__SWIG_0() }
+}
+
+pub fn as_ul() -> c_ulong {
+    unsafe { ffi::Rust_as_ul__SWIG_0() }
+}
+
+pub fn as_l() -> c_long {
+    unsafe { ffi::Rust_as_l__SWIG_0() }
+}
+
+pub fn as_ull() -> u64 {
+    unsafe { ffi::Rust_as_ull__SWIG_0() }
+}
+
+pub fn as_ll() -> i64 {
+    unsafe { ffi::Rust_as_ll__SWIG_0() }
+}
+
+pub fn malloc_void_int(nbytes: i32) -> *mut c_void {
+    unsafe { ffi::Rust_malloc_void__SWIG_0(nbytes) }
+}
+
+pub fn int_object_int(c: i32) -> i32 {
+    unsafe { ffi::Rust_int_object__SWIG_1(c) }
+}
+
 /// Rust wrapper for C++ class Foo
 /// Holds a pointer to the underlying C++ object.
 pub struct Foo {
@@ -378,9 +418,6 @@ pub struct Bar {
 
 /// Trait defining the interface for C++ class Bar
 pub trait BarTrait {
-    fn foo_int_int(&mut self, a: i32, b: i32) -> i32;
-    fn foo_int(&mut self, a: i32) -> i32;
-    fn foo(&mut self) -> i32;
 }
 
 impl Bar {
@@ -408,30 +445,6 @@ impl Bar {
 impl Bar {
     pub fn foo_int_int(a: i32, b: i32) -> i32 {
         unsafe { ffi::Rust_foo__SWIG_0(a, b) }
-    }
-}
-
-impl Bar {
-    pub fn Bar_foo_int(a: i32) -> i32 {
-        unsafe { ffi::Rust_Bar_foo__SWIG_1(a) }
-    }
-}
-
-impl Bar {
-    pub fn foo_int(a: i32) -> i32 {
-        unsafe { ffi::Rust_foo__SWIG_1(a) }
-    }
-}
-
-impl Bar {
-    pub fn Bar_foo() -> i32 {
-        unsafe { ffi::Rust_Bar_foo__SWIG_2() }
-    }
-}
-
-impl Bar {
-    pub fn foo() -> i32 {
-        unsafe { ffi::Rust_foo__SWIG_2() }
     }
 }
 
@@ -466,35 +479,6 @@ impl Bar {
 }
 
 impl BarTrait for Bar {
-    fn foo_int_int(&mut self, a: i32, b: i32) -> i32 {
-        unsafe { ffi::Rust_foo__SWIG_0(self.ptr, a, b) }
-    }
-    fn foo_int(&mut self, a: i32) -> i32 {
-        unsafe { ffi::Rust_foo__SWIG_1(self.ptr, a) }
-    }
-    fn foo(&mut self) -> i32 {
-        unsafe { ffi::Rust_foo__SWIG_2(self.ptr) }
-    }
-}
-
-pub fn foo() -> String {
-    unsafe { ffi::Rust_foo__SWIG_0() }
-}
-
-pub fn foo_int(arg1: i32) -> String {
-    unsafe { ffi::Rust_foo__SWIG_1(arg1) }
-}
-
-pub fn foo_f64(arg1: f64) -> String {
-    unsafe { ffi::Rust_foo__SWIG_2(arg1) }
-}
-
-pub fn foo_f64_Bar(arg1: f64, arg2: *mut c_void) -> String {
-    unsafe { ffi::Rust_foo__SWIG_8(arg1, arg2) }
-}
-
-pub fn blah_f64(arg1: f64) -> String {
-    unsafe { ffi::Rust_blah__SWIG_0(arg1) }
 }
 
 /// Rust wrapper for C++ class Spam
@@ -508,16 +492,10 @@ pub struct Spam {
 pub trait SpamTrait {
     fn foo_int(&mut self, arg0: i32) -> c_char;
     fn foo_f64(&mut self, arg0: f64) -> c_char;
-    fn foo_str(&mut self, arg0: *mut c_void) -> c_char;
+    fn foo_str(&mut self, arg0: *const c_char) -> c_char;
     fn foo_Foo(&mut self, arg0: *mut c_void) -> c_char;
     fn foo_Bar(&mut self, arg0: *mut c_void) -> c_char;
     fn foo_void(&mut self, arg0: *mut c_void) -> c_char;
-    fn bar_int(&mut self, arg0: i32) -> c_char;
-    fn bar_f64(&mut self, arg0: f64) -> c_char;
-    fn bar_str(&mut self, arg0: *mut c_void) -> c_char;
-    fn bar_Foo(&mut self, arg0: *mut c_void) -> c_char;
-    fn bar_Bar(&mut self, arg0: *mut c_void) -> c_char;
-    fn bar_void(&mut self, arg0: *mut c_void) -> c_char;
 }
 
 impl Spam {
@@ -545,7 +523,7 @@ impl Spam {
 }
 
 impl Spam {
-    pub fn new_str(arg0: *mut c_void) -> Self {
+    pub fn new_str(arg0: *const c_char) -> Self {
         Self {
             ptr: unsafe { ffi::Rust_new_Spam__SWIG_3(arg0) },
         }
@@ -594,66 +572,6 @@ impl Spam {
     }
 }
 
-impl Spam {
-    pub fn Spam_bar_f64(arg1: f64) -> String {
-        unsafe { ffi::Rust_Spam_bar__SWIG_1(arg1) }
-    }
-}
-
-impl Spam {
-    pub fn bar_f64(arg1: f64) -> String {
-        unsafe { ffi::Rust_bar__SWIG_1(arg1) }
-    }
-}
-
-impl Spam {
-    pub fn Spam_bar_str(arg1: String) -> String {
-        unsafe { ffi::Rust_Spam_bar__SWIG_2(arg1) }
-    }
-}
-
-impl Spam {
-    pub fn bar_str(arg1: String) -> String {
-        unsafe { ffi::Rust_bar__SWIG_2(arg1) }
-    }
-}
-
-impl Spam {
-    pub fn Spam_bar_Foo(arg1: *mut c_void) -> String {
-        unsafe { ffi::Rust_Spam_bar__SWIG_3(arg1) }
-    }
-}
-
-impl Spam {
-    pub fn bar_Foo(arg1: *mut c_void) -> String {
-        unsafe { ffi::Rust_bar__SWIG_3(arg1) }
-    }
-}
-
-impl Spam {
-    pub fn Spam_bar_Bar(arg1: *mut c_void) -> String {
-        unsafe { ffi::Rust_Spam_bar__SWIG_4(arg1) }
-    }
-}
-
-impl Spam {
-    pub fn bar_Bar(arg1: *mut c_void) -> String {
-        unsafe { ffi::Rust_bar__SWIG_4(arg1) }
-    }
-}
-
-impl Spam {
-    pub fn Spam_bar_void(arg1: *mut c_void) -> String {
-        unsafe { ffi::Rust_Spam_bar__SWIG_5(arg1) }
-    }
-}
-
-impl Spam {
-    pub fn bar_void(arg1: *mut c_void) -> String {
-        unsafe { ffi::Rust_bar__SWIG_5(arg1) }
-    }
-}
-
 impl Drop for Spam {
     fn drop(&mut self) {
         unsafe { ffi::Rust_delete_Spam__SWIG_0(self.ptr) }
@@ -679,7 +597,7 @@ impl SpamTrait for Spam {
     fn foo_f64(&mut self, arg: f64) -> c_char {
         unsafe { ffi::Rust_Spam_foo__SWIG_1(self.ptr, arg) }
     }
-    fn foo_str(&mut self, arg: *mut c_void) -> c_char {
+    fn foo_str(&mut self, arg: *const c_char) -> c_char {
         unsafe { ffi::Rust_Spam_foo__SWIG_2(self.ptr, arg) }
     }
     fn foo_Foo(&mut self, arg: *mut c_void) -> c_char {
@@ -691,104 +609,6 @@ impl SpamTrait for Spam {
     fn foo_void(&mut self, arg: *mut c_void) -> c_char {
         unsafe { ffi::Rust_Spam_foo__SWIG_5(self.ptr, arg) }
     }
-    fn bar_int(&mut self, arg: i32) -> c_char {
-        unsafe { ffi::Rust_bar__SWIG_0(self.ptr, arg) }
-    }
-    fn bar_f64(&mut self, arg: f64) -> c_char {
-        unsafe { ffi::Rust_bar__SWIG_1(self.ptr, arg) }
-    }
-    fn bar_str(&mut self, arg: String) -> c_char {
-        unsafe { ffi::Rust_bar__SWIG_2(self.ptr, arg) }
-    }
-    fn bar_Foo(&mut self, arg: *mut c_void) -> c_char {
-        unsafe { ffi::Rust_bar__SWIG_3(self.ptr, arg) }
-    }
-    fn bar_Bar(&mut self, arg: *mut c_void) -> c_char {
-        unsafe { ffi::Rust_bar__SWIG_4(self.ptr, arg) }
-    }
-    fn bar_void(&mut self, arg: *mut c_void) -> c_char {
-        unsafe { ffi::Rust_bar__SWIG_5(self.ptr, arg) }
-    }
-}
-
-pub fn fbool_bool(b: bool) -> bool {
-    unsafe { ffi::Rust_fbool__SWIG_0(b) }
-}
-
-pub fn fbool_int(b: i32) -> i32 {
-    unsafe { ffi::Rust_fbool__SWIG_1(b) }
-}
-
-pub fn fint_int(arg1: i32) -> String {
-    unsafe { ffi::Rust_fint__SWIG_0(arg1) }
-}
-
-pub fn fdouble_f64(arg1: f64) -> String {
-    unsafe { ffi::Rust_fdouble__SWIG_0(arg1) }
-}
-
-pub fn num_int(arg1: i32) -> String {
-    unsafe { ffi::Rust_num__SWIG_0(arg1) }
-}
-
-pub fn num_f64(arg1: f64) -> String {
-    unsafe { ffi::Rust_num__SWIG_1(arg1) }
-}
-
-pub fn fid_int_int(arg1: i32, arg2: i32) -> String {
-    unsafe { ffi::Rust_fid__SWIG_0(arg1, arg2) }
-}
-
-pub fn fid_int_f64(arg1: i32, arg2: f64) -> String {
-    unsafe { ffi::Rust_fid__SWIG_1(arg1, arg2) }
-}
-
-pub fn fid_f64_int(arg1: f64, arg2: i32) -> String {
-    unsafe { ffi::Rust_fid__SWIG_2(arg1, arg2) }
-}
-
-pub fn fid_f64_f64(arg1: f64, arg2: f64) -> String {
-    unsafe { ffi::Rust_fid__SWIG_3(arg1, arg2) }
-}
-
-pub fn sizeof_long() -> i32 {
-    unsafe { ffi::Rust_sizeof_long__SWIG_0() }
-}
-
-pub fn as_ul() -> u64 {
-    unsafe { ffi::Rust_as_ul__SWIG_0() }
-}
-
-pub fn as_ul_long(ul: u64) -> u64 {
-    unsafe { ffi::Rust_as_ul__SWIG_1(ul) }
-}
-
-pub fn as_l() -> i64 {
-    unsafe { ffi::Rust_as_l__SWIG_0() }
-}
-
-pub fn as_l_long(l: i64) -> i64 {
-    unsafe { ffi::Rust_as_l__SWIG_1(l) }
-}
-
-pub fn as_ull() -> u64 {
-    unsafe { ffi::Rust_as_ull__SWIG_0() }
-}
-
-pub fn as_ull_long(ull: u64) -> u64 {
-    unsafe { ffi::Rust_as_ull__SWIG_1(ull) }
-}
-
-pub fn as_ll() -> i64 {
-    unsafe { ffi::Rust_as_ll__SWIG_0() }
-}
-
-pub fn as_ll_long(ll: i64) -> i64 {
-    unsafe { ffi::Rust_as_ll__SWIG_1(ll) }
-}
-
-pub fn malloc_void_int(nbytes: i32) -> *mut c_void {
-    unsafe { ffi::Rust_malloc_void__SWIG_0(nbytes) }
 }
 
 /// Rust wrapper for C++ class ClassA
@@ -841,9 +661,5 @@ impl ClassATrait for ClassA {
     fn method1_int_int(&mut self, arg1: i32, arg2: i32) -> i32 {
         unsafe { ffi::Rust_method1(self.ptr, arg1, arg2) }
     }
-}
-
-pub fn int_object_int(c: i32) -> i32 {
-    unsafe { ffi::Rust_int_object__SWIG_1(c) }
 }
 

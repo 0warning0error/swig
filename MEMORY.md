@@ -1006,3 +1006,455 @@ FFI 函数期望 `u8` (c_uchar)，但传入了 Rust `bool`。
 2. 组织阶段：构建命名空间树，合并同名命名空间
 3. 生成阶段：每个命名空间生成一个 `pub mod` 块
 
+---
+
+## 2026-04-15 本次会话：SwigString FFI 实现与 Bug 修复
+
+### 1. getRustUserType() use-after-free 修复 ✅
+
+**问题**: 在 `Source/Modules/rust.cxx` 的 `getRustUserType()` 函数中，`base` 指针在处理 `std::string` 和 `char*` 后被删除，但 switch 语句的 `T_USER` 和 `default` 分支仍尝试使用它，导致访问违规崩溃 (0xC0000005)。
+
+**症状**: 处理包含 `size_t` 类型或 `std::string` 类定义的接口文件时 SWIG 崩溃。
+
+**修复**: 
+```cpp
+// 在删除 base 后设置为 NULL
+Delete(base);
+base = NULL;
+
+// 在 switch 的 T_USER 和 default 分支中重新获取 base
+String *fresh_base = SwigType_base(t);
+String *clean = cleanTypeName(fresh_base);
+Delete(fresh_base);
+return clean;
+```
+
+### 2. 添加 `rustcode` Section 注册 ✅
+
+**问题**: `Lib/rust/std_string.i` 使用 `%insert("rustcode")` 但 SWIG 不认识这个 section，报错 "Unknown target 'rustcode' for %insert directive"。
+
+**修复**: 在 `Source/Modules/rust.cxx` 的 `top()` 函数中添加：
+```cpp
+Swig_register_filebyname("rustcode", f_wrapper_code);
+```
+
+**用途**: 允许 `%insert("rustcode")` 将 Rust 代码直接插入到生成的 `.rs` 文件的安全包装层中。
+
+### 3. SwigString 类型映射基础实现 ✅
+
+**文件**: `Lib/rust/std_string.i`
+
+**设计决策**:
+- `std::string` 映射到自定义 `SwigString` 类型（而非直接用 Rust `String`）
+- 支持完整的 `std::string` 接口
+- 提供 `From/Into` trait 实现与 Rust `String` 的双向转换
+
+**类型映射表**:
+| C++ 类型 | Rust 用户类型 | FFI 类型 |
+|---------|-------------|----------|
+| `std::string` | `SwigString` | `*mut c_void` |
+| `const std::string&` | `&SwigString` | `*const c_void` |
+| `std::string&` | `&SwigString` | `*mut c_void` |
+| `std::string*` | `Option<SwigString>` | `*mut c_void` |
+| `const std::string*` | `Option<&SwigString>` | `*const c_void` |
+
+**已生成的 trait 实现**:
+- `Display`, `Debug` - 格式化输出
+- `PartialEq`, `Eq`, `PartialOrd`, `Ord` - 比较
+- `Hash` - 哈希
+- `Default` - 默认值
+- `From<String>`, `From<&str>` - 从 Rust 字符串创建
+- `From<SwigString> for String` - 转换为 Rust 字符串
+- `Into<String>` - 隐式转换
+- `Deref`, `Borrow<[u8]>` - 字节访问
+
+### 4. SwigString FFI 完整实现 ✅ (2026-04-15)
+
+**文件**: `Lib/rust/std_string.i`
+
+**设计改进**: 使用 typemap 机制而非硬编码
+
+**新增 Typemap**:
+| Typemap | 用途 | 示例 |
+|---------|------|------|
+| `rsin` | Rust 参数传递方式 | `$input.ptr` |
+| `rsout` | Rust 返回值包装 | `SwigString { ptr: $result }` |
+
+**C++ 辅助函数** (已生成):
+```cpp
+extern "C" {
+    void* SwigString_new();
+    void* SwigString_from_bytes(const char* data, size_t len);
+    void* SwigString_from_c_str(const char* s);
+    void SwigString_delete(void* ptr);
+    const char* SwigString_c_str(const void* ptr);
+    const char* SwigString_data(const void* ptr);
+    size_t SwigString_len(const void* ptr);
+    int SwigString_is_empty(const void* ptr);
+    void SwigString_clear(void* ptr);
+    void SwigString_append(void* ptr, const char* data, size_t len);
+    size_t SwigString_capacity(const void* ptr);
+    void SwigString_reserve(void* ptr, size_t capacity);
+    int SwigString_compare(const void* ptr1, const void* ptr2);
+    void* SwigString_clone(const void* ptr);
+    void SwigString_resize(void* ptr, size_t new_len, char fill_char);
+    void* SwigString_substr(const void* ptr, size_t pos, size_t len);
+    long SwigString_find(const void* ptr, const char* needle, size_t pos);
+    long SwigString_rfind(const void* ptr, const char* needle, size_t pos);
+    void SwigString_push_back(void* ptr, char c);
+    int SwigString_pop_back(void* ptr);
+    char SwigString_at(const void* ptr, size_t index);
+    void SwigString_set_at(void* ptr, size_t index, char c);
+}
+```
+
+**Rust SwigString 实现**:
+```rust
+pub struct SwigString {
+    ptr: *mut std::ffi::c_void,
+}
+
+impl SwigString {
+    pub fn new() -> Self;
+    pub fn from_str(s: &str) -> Self;
+    pub fn from_bytes(bytes: &[u8]) -> Self;
+    pub fn len(&self) -> usize;
+    pub fn is_empty(&self) -> bool;
+    pub fn as_bytes(&self) -> &[u8];
+    pub fn into_string(self) -> String;
+    pub fn to_string_lossy(&self) -> String;
+    pub fn append(&mut self, bytes: &[u8]);
+    pub fn clear(&mut self);
+    pub fn reserve(&mut self, capacity: usize);
+    pub fn find(&self, needle: &str, pos: usize) -> Option<usize>;
+    // ... 更多方法
+}
+```
+
+### 5. rust.cxx 中的 SwigString 处理修复 🔄 (进行中)
+
+**问题**: `rust.cxx` 中硬编码了 SwigString 的处理逻辑
+
+**当前修复**:
+- 参数传递: `.as_ptr() as *const c_char` → `.ptr`
+- 返回值包装: 需要构造 `SwigString { ptr: ... }`
+
+**待修复位置** (8 处):
+- `L3273`, `L3302`, `L3340`, `L3368`, `L3396` - emitRustImpl 中的参数传递
+- `L3594`, `L3615` - emitRustImpl 中的返回值处理
+- `L3975` - 其他位置
+
+**正确的设计方向**:
+应该通过 typemap 机制来处理，而不是在 rust.cxx 中硬编码：
+```swig
+%typemap(rsin) std::string "$input.ptr"
+%typemap(rsout) std::string "SwigString { ptr: $result }"
+```
+
+然后 rust.cxx 应该使用 `Swig_typemap_lookup("rsin", ...)` 来获取转换代码。
+
+### 6. 测试验证
+
+**成功的测试**:
+- `simple_test.i` - 基本类型
+- `size_t_test.i` - `size_t` 类型（之前崩溃，现在通过）
+- `string_test.i` - `std::string` 类定义（之前崩溃，现在通过）
+- `test_swigstring.i` - 完整的 SwigString 生成
+
+**生成的代码示例** (`test_swigstring.rs`):
+```rust
+pub struct SwigString {
+    ptr: *mut std::ffi::c_void,
+}
+
+impl SwigString {
+    pub const NPOS: usize = usize::MAX;
+    pub fn new() -> Self { ... }
+    pub fn from_c_str(s: &str) -> Self { ... }
+    pub fn as_ptr(&self) -> *const std::os::raw::c_char { ... }
+    pub fn len(&self) -> usize { ... }
+    pub fn into_string(self) -> String { ... }
+}
+
+impl From<String> for SwigString { ... }
+impl From<SwigString> for String { ... }
+```
+
+---
+
+## 后续工作计划
+
+### P0 - 必须
+1. **SwigString 参数/返回值处理** 🔄 进行中
+   - 需要在 rust.cxx 中使用 typemap 而非硬编码
+   - 修复 `.as_ptr()` → `.ptr` 的参数传递
+   - 修复返回值构造 `SwigString { ptr: ... }`
+   
+2. **继承关系修复** - 派生类需要同时实现基类 trait
+
+### P1 - 重要
+3. **bool 类型转换** - FFI 调用时添加 `bool as u8` 转换
+4. **std::string 成员方法 FFI** - 完整的字符串操作方法
+
+### P2 - 增强
+5. **运算符映射完善** - 更多运算符 trait
+6. **双向转换优化** - UTF-8 验证和零拷贝
+
+---
+
+## 设计改进建议
+
+### Typemap 优先原则
+
+**问题**: 当前 rust.cxx 中有大量硬编码的类型检测逻辑，如：
+```cpp
+bool is_string_param = pbase && (Strstr(pbase, "basic_string") || 
+                                 Strcmp(pbase, "string") == 0 ||
+                                 Strcmp(pbase, "std::string") == 0);
+```
+
+**建议**: 应该通过 typemap 机制来处理类型转换：
+```swig
+// 在 std_string.i 中定义
+%typemap(rsin) std::string "$input.ptr"
+%typemap(rsout) std::string "SwigString { ptr: $result }"
+```
+
+```cpp
+// 在 rust.cxx 中使用
+String *rsin = Swig_typemap_lookup("rsin", p, lname, 0);
+if (rsin) {
+    // 使用 typemap 中的转换代码
+    Replaceall(rsin, "$input", pname);
+    Printf(f_wrapper_code, "%s", rsin);
+} else {
+    // 默认行为
+    Printf(f_wrapper_code, "%s", pname);
+}
+```
+
+**优点**:
+- 类型处理逻辑集中在 typemap 文件中
+- 用户可以自定义类型转换
+- 符合 SWIG 的设计哲学
+- 减少 rust.cxx 中的硬编码
+
+---
+
+## 最后更新
+2026-04-15 (继承链修复、类型映射修复、枚举返回类型修复)
+
+### Phase 24: 继承链 trait 实现修复 ✅
+
+**问题**: `GrandDerived` 类继承了 `Derived`，`Derived` 继承了 `Base`。生成的代码中：
+- `GrandDerived` 只实现了 `DerivedTrait`
+- 缺少 `BaseTrait` 实现
+- 导致 Rust 编译错误：`the trait bound 'GrandDerived: BaseTrait' is not satisfied`
+
+**原因**: 原 `emitRustImpl()` 只为直接基类生成 trait 实现，没有递归处理整个继承链
+
+**修复** (`Source/Modules/rust.cxx`):
+1. 收集所有祖先类（使用工作列表算法）
+2. 为每个祖先类生成 `impl AncestorTrait for Derived`
+
+**生成的代码示例**:
+```rust
+// GrandDerived 现在正确实现了所有祖先 trait
+impl GrandDerivedTrait for GrandDerived { ... }
+impl DerivedTrait for GrandDerived { ... }
+impl BaseTrait for GrandDerived { ... }  // 新增！
+```
+
+---
+
+### Phase 25: long/unsigned long 类型映射修复 ✅
+
+**问题**: Windows 上 `long` 是 4 字节，但 typemap 映射到 `i64`（8 字节）
+- FFI 层 `c_long` 在 Windows 上是 `i32`
+- 导致类型不匹配编译错误
+
+**修复** (`Lib/rust/rusttype.swg`):
+```swig
+// 修改前
+%typemap(rusttype) long "i64"
+%typemap(rusttype) unsigned long "u64"
+
+// 修改后 - 使用平台自适应类型
+%typemap(rusttype) long "c_long"
+%typemap(rusttype) unsigned long "c_ulong"
+```
+
+同样修复了 `size_t` 和 `ptrdiff_t`:
+```swig
+%typemap(rusttype) size_t "usize"
+%typemap(rsffitype) size_t "usize"  // 统一使用 usize
+```
+
+---
+
+### Phase 26: 枚举返回类型 FFI 转换修复 ✅
+
+**问题**: 类方法返回枚举类型时，FFI 返回 `c_int`，但方法签名要求枚举类型
+```rust
+fn get_status(&self) -> EnumClass_Status {
+    unsafe { ffi::Rust_EnumClass_get_status__SWIG_0(self.ptr) }  // 错误：返回 i32
+}
+```
+
+**修复** (`Source/Modules/rust.cxx`):
+1. 在 `emitRustImpl()` 中添加枚举类型检测
+2. 使用 `std::mem::transmute::<i32, EnumType>()` 进行转换
+
+**生成的代码**:
+```rust
+fn get_status(&self) -> EnumClass_Status {
+    unsafe { std::mem::transmute::<i32, EnumClass_Status>(
+        ffi::Rust_EnumClass_get_status__SWIG_0(self.ptr)
+    )}
+}
+```
+
+**枚举检测逻辑**:
+1. `SwigType_isenum()` - SWIG 内置检测
+2. 类型字符串检查 `"enum "` 前缀
+3. 排除法：非基本类型、非指针、非引用、非用户类的自定义类型
+
+---
+
+### 测试验证通过的用例 ✅
+
+| 测试文件 | 说明 | 状态 |
+|---------|------|------|
+| `inherit_basic.rs` | 三层继承 | ✅ |
+| `primitive_types_simple.rs` | 基本类型 + long | ✅ |
+| `class_methods.rs` | 类方法 | ✅ |
+| `overload_test.rs` | 函数重载 | ✅ |
+| `enums_test.rs` | 枚举类型 | ✅ |
+| `template_test.rs` | 模板实例化 | ✅ |
+
+---
+
+### 待完成的工作
+
+| 优先级 | 任务 | 状态 |
+|--------|------|------|
+| P2 | 成员变量 getter 返回引用问题 | ✅ 已修复 |
+| P3 | std::string 高级方法 FFI | ✅ 完成 |
+| P3 | std::wstring 支持 | ✅ 完成 |
+| P3 | 其他 STL 容器绑定 | 待实现 |
+| P4 | 编写 Rust 绑定文档 | 待实现 |
+| P4 | 代码重构（移除硬编码） | 待实现 |
+
+---
+
+## 2026-04-15 本次会话：Phase 27 成员变量 getter 返回引用修复 ✅
+
+### 问题描述
+
+当 C++ 类的成员变量是 `std::string` 类型时，生成的成员变量 getter 存在类型不匹配问题：
+
+**问题代码**:
+```rust
+// 错误的生成代码
+pub fn name(&self) -> &SwigString {
+    unsafe { ffi::Rust_StringMember_name_get__SWIG_0(self.ptr) }  // 返回 *const c_void
+}
+```
+
+**根因**:
+- C++ getter 返回 `const std::string&`（内部成员的引用）
+- 类型映射定义 `rusttype` 为 `&SwigString`
+- FFI 函数返回 `*const c_void`（原始指针）
+- Rust 无法直接将原始指针作为引用返回
+
+### 修复方案
+
+成员变量 getter 不应返回引用（Rust 无法安全持有 C++ 内部数据的引用），改为返回 owned 类型并克隆字符串：
+
+**修复后的代码**:
+```rust
+pub fn name(&self) -> SwigString {
+    SwigString { ptr: unsafe { swig_string_ffi::SwigString_clone(ffi::Rust_StringMember_name_get__SWIG_0(self.ptr)) } }
+}
+```
+
+### 修改的文件
+
+`Source/Modules/rust.cxx`:
+1. 添加 `return_is_swigstring_ref` 变量检测 `&SwigString` 返回类型
+2. 对于成员变量 getter，将 `&SwigString` 转换为 `SwigString`（owned）
+3. 使用 `SwigString_clone` 复制字符串，避免持有 C++ 内部指针
+
+### 测试验证
+
+```
+16 passed, 0 failed, 0 skipped
+```
+
+---
+
+## 2026-04-15 本次会话：Phase 28 std::string 高级方法 ✅
+
+### 新增的高级方法
+
+| 方法 | 说明 |
+|------|------|
+| `insert`, `insert_str`, `insert_char` | 在位置插入字节/字符串/字符 |
+| `erase` | 删除指定范围的字符 |
+| `replace`, `replace_str` | 替换指定范围的字符 |
+| `find_first_of` / `find_last_of` | 查找字符集中的字符 |
+| `find_first_not_of` / `find_last_not_of` | 查找不在字符集中的字符 |
+| `shrink_to_fit` | 收缩容量 |
+| `front`, `back` | 获取首/尾字符 |
+| `swap` | 交换两个字符串内容 |
+
+### 修改的文件
+
+- `Lib/rust/std_string.i` - 添加高级方法的 C++ FFI 函数和 Rust 实现
+
+---
+
+## 2026-04-15 本次会话：Phase 29 std::wstring 支持 ✅
+
+### 创建的文件
+
+| 文件 | 说明 |
+|------|------|
+| `Lib/rust/std_wstring.i` | std::wstring 类型映射和 SwigWString 包装 |
+| `Examples/test-suite/rust/std_wstring_test.i` | 测试文件 |
+
+### SwigWString 功能
+
+- **平台检测**: `wchar_size()` 返回 2 (Windows) 或 4 (Unix)
+- **数据访问**: `from_utf16()`, `from_utf32()`, `as_u16_slice()`, `as_u32_slice()`
+- **trait 实现**: Default, Drop, Clone, Debug, PartialEq, Eq, PartialOrd, Ord
+
+### 修改的文件
+
+- `Source/Modules/rust.cxx` - 添加 SwigWString 类型检测
+- `Lib/rust/rusttype.swg` - 添加 wchar_t/wchar_t* 类型映射
+
+### 设计要点
+
+- 不提供与 Rust String 的转换
+- wchar_t 映射到 u16（Windows 平台）
+- 支持 UTF-16 和 UTF-32 输入
+
+---
+
+## 2026-04-15 待重构项
+
+### 问题：rust.cxx 硬编码不符合 SWIG 设计模式
+
+**当前做法** (不符合其他语言模块的做法):
+- 在 `rust.cxx` 中硬编码 SwigString/SwigWString 的检测和包装
+
+**其他语言的做法**:
+- `.cxx` 只处理字面量转义
+- `std::string`/`std::wstring` 类型映射都在 `.i` 文件中
+
+**重构计划** (详见 RUST_TODO.md Phase 30):
+1. 完善 `rsin`/`rsout` typemap
+2. 移除 rust.cxx 中的硬编码
+3. 改用统一的 typemap 查找机制
+

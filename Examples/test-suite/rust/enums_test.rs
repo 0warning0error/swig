@@ -41,6 +41,14 @@ use std::os::raw::*;
 
 // Safe wrapper functions
 
+pub fn get_favorite_color() -> Color {
+    unsafe { std::mem::transmute::<i32, Color>(ffi::Rust_get_favorite_color__SWIG_0()) }
+}
+
+pub fn get_default_size() -> Size {
+    unsafe { std::mem::transmute::<i32, Size>(ffi::Rust_get_default_size__SWIG_0()) }
+}
+
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Color {
@@ -57,6 +65,14 @@ pub enum Size {
     LARGE = 10,
 }
 
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum EnumClass_Status {
+    OK,
+    ERROR,
+    PENDING,
+}
+
 /// Rust wrapper for C++ class EnumClass
 /// Holds a pointer to the underlying C++ object.
 pub struct EnumClass {
@@ -66,16 +82,8 @@ pub struct EnumClass {
 
 /// Trait defining the interface for C++ class EnumClass
 pub trait EnumClassTrait {
-    fn get_status(&mut self) -> EnumClass_Status;
+    fn get_status(&self) -> EnumClass_Status;
     fn set_status(&mut self, s: i32);
-}
-
-#[repr(C)]
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum EnumClass_Status {
-    OK,
-    ERROR,
-    PENDING,
 }
 
 impl EnumClass {
@@ -105,19 +113,11 @@ impl EnumClass {
 }
 
 impl EnumClassTrait for EnumClass {
-    fn get_status(&mut self) -> EnumClass_Status {
-        unsafe { ffi::Rust_EnumClass_get_status__SWIG_0(self.ptr) }
+    fn get_status(&self) -> EnumClass_Status {
+        unsafe { std::mem::transmute::<i32, EnumClass_Status>(ffi::Rust_EnumClass_get_status__SWIG_0(self.ptr)) }
     }
     fn set_status(&mut self, s: i32) {
         unsafe { ffi::Rust_EnumClass_set_status__SWIG_0(self.ptr, s) }
     }
-}
-
-pub fn get_favorite_color() -> Color {
-    unsafe { ffi::Rust_get_favorite_color__SWIG_0() }
-}
-
-pub fn get_default_size() -> Size {
-    unsafe { ffi::Rust_get_default_size__SWIG_0() }
 }
 

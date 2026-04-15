@@ -12,7 +12,7 @@ mod ffi {
     use std::os::raw::*;
 
     extern "C" {
-        pub fn SwigDirector_CallbackBase_new_director_vtable(vtable: *mut c_void, rust_director: *mut c_void) -> *mut c_void;
+        pub fn SwigDirector_CallbackBase_new_director_vtable(vtable: *const super::CallbackBaseVTable, rust_director: *mut c_void) -> *mut c_void;
         pub fn SwigDirector_CallbackBase_drop_director(rust_director: *mut c_void);
     }
 
@@ -142,15 +142,17 @@ impl CallbackBase {
     /// Create a new CallbackBase with a Rust Director implementation using VTable
     /// 
     /// This uses associated constants for zero-overhead virtual dispatch.
+    /// The VTable is passed by reference to C++ (no copy needed).
     /// Requires Rust 1.20+
     pub fn new_with_vtable<D: CallbackBaseDirector + Sized + 'static>(director: D) -> Self {
         // Get the VTable through the VTableProvider trait
         let vtable: &'static CallbackBaseVTable = &<D as CallbackBaseVTableProvider>::VTABLE;
         // Box the director object
         let director_ptr = Box::into_raw(Box::new(director)) as *mut c_void;
-        // Pass both vtable and director pointer to C++
+        // Pass vtable pointer and director pointer to C++
+        // C++ just stores the pointer, no copying of function pointers
         Self {
-            ptr: unsafe { ffi::SwigDirector_CallbackBase_new_director_vtable(vtable as *const CallbackBaseVTable as *mut c_void, director_ptr) },
+            ptr: unsafe { ffi::SwigDirector_CallbackBase_new_director_vtable(vtable, director_ptr) },
         }
     }
 }
@@ -231,7 +233,7 @@ pub struct CallbackUser {
 /// Trait defining the interface for C++ class CallbackUser
 pub trait CallbackUserTrait {
     fn set_callback(&mut self, cb: *mut c_void);
-    fn get_callback(&mut self) -> CallbackBase;
+    fn get_callback(&self) -> CallbackBase;
     fn notify(&mut self, event_id: i32);
     fn process_value(&mut self, v: i32) -> i32;
 }
@@ -286,7 +288,7 @@ impl CallbackUserTrait for CallbackUser {
     fn set_callback(&mut self, cb: *mut c_void) {
         unsafe { ffi::Rust_CallbackUser_set_callback__SWIG_0(self.ptr, cb) }
     }
-    fn get_callback(&mut self) -> CallbackBase {
+    fn get_callback(&self) -> CallbackBase {
         CallbackBase { ptr: unsafe { ffi::Rust_CallbackUser_get_callback__SWIG_0(self.ptr) } }
     }
     fn notify(&mut self, event_id: i32) {

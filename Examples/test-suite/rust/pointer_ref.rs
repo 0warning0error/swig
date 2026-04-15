@@ -101,6 +101,10 @@ use std::os::raw::*;
 
 // Safe wrapper functions
 
+pub fn create_value_int(v: i32) -> *mut c_void {
+    unsafe { ffi::Rust_create_value__SWIG_0(v) }
+}
+
 /// Rust wrapper for C++ class ValueClass
 /// Holds a pointer to the underlying C++ object.
 pub struct ValueClass {
@@ -110,7 +114,7 @@ pub struct ValueClass {
 
 /// Trait defining the interface for C++ class ValueClass
 pub trait ValueClassTrait {
-    fn get(&mut self) -> i32;
+    fn get(&self) -> i32;
     fn set(&mut self, v: i32);
 }
 
@@ -161,16 +165,12 @@ impl ValueClass {
 }
 
 impl ValueClassTrait for ValueClass {
-    fn get(&mut self) -> i32 {
+    fn get(&self) -> i32 {
         unsafe { ffi::Rust_ValueClass_get__SWIG_0(self.ptr) }
     }
     fn set(&mut self, v: i32) {
         unsafe { ffi::Rust_ValueClass_set__SWIG_0(self.ptr, v) }
     }
-}
-
-pub fn create_value_int(v: i32) -> *mut c_void {
-    unsafe { ffi::Rust_create_value__SWIG_0(v) }
 }
 
 /// Rust wrapper for C++ class PointerHolder
@@ -183,8 +183,8 @@ pub struct PointerHolder {
 /// Trait defining the interface for C++ class PointerHolder
 pub trait PointerHolderTrait {
     fn set_ptr(&mut self, p: *mut c_void);
-    fn get_ptr(&mut self) -> ValueClass;
-    fn get_value(&mut self) -> i32;
+    fn get_ptr(&self) -> ValueClass;
+    fn get_value(&self) -> i32;
 }
 
 impl PointerHolder {
@@ -237,10 +237,10 @@ impl PointerHolderTrait for PointerHolder {
     fn set_ptr(&mut self, p: *mut c_void) {
         unsafe { ffi::Rust_PointerHolder_set_ptr__SWIG_0(self.ptr, p) }
     }
-    fn get_ptr(&mut self) -> ValueClass {
+    fn get_ptr(&self) -> ValueClass {
         ValueClass { ptr: unsafe { ffi::Rust_PointerHolder_get_ptr__SWIG_0(self.ptr) } }
     }
-    fn get_value(&mut self) -> i32 {
+    fn get_value(&self) -> i32 {
         unsafe { ffi::Rust_PointerHolder_get_value__SWIG_0(self.ptr) }
     }
 }

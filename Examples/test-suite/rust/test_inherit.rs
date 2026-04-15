@@ -309,13 +309,3 @@ impl DerivedTrait for GrandDerived {
     }
 }
 
-// Base trait implementation for inheritance
-impl BaseTrait for GrandDerived {
-    fn base_method(&mut self) -> i32 {
-        unsafe { ffi::Rust_Base_base_method__SWIG_0(self.ptr) }
-    }
-    fn virtual_method(&mut self) -> i32 {
-        unsafe { ffi::Rust_Base_virtual_method__SWIG_0(self.ptr) }
-    }
-}
-

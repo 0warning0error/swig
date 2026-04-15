@@ -89,6 +89,14 @@ use std::os::raw::*;
 
 // Safe wrapper functions
 
+pub fn global_int_add_int_int(a: i32, b: i32) -> i32 {
+    unsafe { ffi::Rust_global_int_add__SWIG_0(a, b) }
+}
+
+pub fn global_double_add_f64_f64(a: f64, b: f64) -> f64 {
+    unsafe { ffi::Rust_global_double_add__SWIG_0(a, b) }
+}
+
 /// Rust wrapper for C++ class IntContainer
 /// Holds a pointer to the underlying C++ object.
 pub struct IntContainer {
@@ -98,7 +106,7 @@ pub struct IntContainer {
 
 /// Trait defining the interface for C++ class IntContainer
 pub trait IntContainerTrait {
-    fn get(&mut self) -> i32;
+    fn get(&self) -> i32;
     fn set(&mut self, v: i32);
     fn add(&mut self, other: i32) -> i32;
 }
@@ -150,7 +158,7 @@ impl IntContainer {
 }
 
 impl IntContainerTrait for IntContainer {
-    fn get(&mut self) -> i32 {
+    fn get(&self) -> i32 {
         unsafe { ffi::Rust_IntContainer_get__SWIG_0(self.ptr) }
     }
     fn set(&mut self, v: i32) {
@@ -170,7 +178,7 @@ pub struct DoubleContainer {
 
 /// Trait defining the interface for C++ class DoubleContainer
 pub trait DoubleContainerTrait {
-    fn get(&mut self) -> f64;
+    fn get(&self) -> f64;
     fn set(&mut self, v: f64);
     fn add(&mut self, other: f64) -> f64;
 }
@@ -222,7 +230,7 @@ impl DoubleContainer {
 }
 
 impl DoubleContainerTrait for DoubleContainer {
-    fn get(&mut self) -> f64 {
+    fn get(&self) -> f64 {
         unsafe { ffi::Rust_DoubleContainer_get__SWIG_0(self.ptr) }
     }
     fn set(&mut self, v: f64) {
@@ -231,13 +239,5 @@ impl DoubleContainerTrait for DoubleContainer {
     fn add(&mut self, other: f64) -> f64 {
         unsafe { ffi::Rust_DoubleContainer_add__SWIG_0(self.ptr, other) }
     }
-}
-
-pub fn global_int_add_int_int(a: i32, b: i32) -> i32 {
-    unsafe { ffi::Rust_global_int_add__SWIG_0(a, b) }
-}
-
-pub fn global_double_add_f64_f64(a: f64, b: f64) -> f64 {
-    unsafe { ffi::Rust_global_double_add__SWIG_0(a, b) }
 }
 

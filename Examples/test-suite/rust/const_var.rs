@@ -118,14 +118,14 @@ pub struct ConstClass {
 
 /// Trait defining the interface for C++ class ConstClass
 pub trait ConstClassTrait {
-    fn get_value(&mut self) -> i32;
+    fn get_value(&self) -> i32;
     fn set_value(&mut self, v: i32);
 }
 
 pub const ConstClass_CLASS_CONST: i32 = ConstClass::CLASS_CONST;
 impl ConstClass {
-    pub fn ConstClass_static_var_set_int(ConstClass::static_var: i32) {
-        unsafe { ffi::Rust_ConstClass_static_var_set__SWIG_0(ConstClass::static_var) }
+    pub fn ConstClass_static_var_set_int(ConstClass_static_var: i32) {
+        unsafe { ffi::Rust_ConstClass_static_var_set__SWIG_0(ConstClass_static_var) }
     }
 }
 
@@ -174,7 +174,7 @@ impl ConstClass {
 }
 
 impl ConstClassTrait for ConstClass {
-    fn get_value(&mut self) -> i32 {
+    fn get_value(&self) -> i32 {
         unsafe { ffi::Rust_ConstClass_get_value__SWIG_0(self.ptr) }
     }
     fn set_value(&mut self, v: i32) {

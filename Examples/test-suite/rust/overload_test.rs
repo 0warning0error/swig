@@ -65,6 +65,10 @@ use std::os::raw::*;
 
 // Safe wrapper functions
 
+pub fn add_int_int(a: i32, b: i32) -> i32 {
+    unsafe { ffi::Rust_add__SWIG_0(a, b) }
+}
+
 /// Rust wrapper for C++ class OverloadClass
 /// Holds a pointer to the underlying C++ object.
 pub struct OverloadClass {
@@ -77,7 +81,6 @@ pub trait OverloadClassTrait {
     fn process_int(&mut self, x: i32) -> i32;
     fn process_f64(&mut self, x: f64) -> i32;
     fn process_int_int(&mut self, x: i32, y: i32) -> i32;
-    fn get(&mut self) -> i32;
     fn get(&mut self) -> i32;
 }
 
@@ -136,20 +139,5 @@ impl OverloadClassTrait for OverloadClass {
     fn get(&mut self) -> i32 {
         unsafe { ffi::Rust_OverloadClass_get__SWIG_0(self.ptr) }
     }
-    fn get(&mut self) -> i32 {
-        unsafe { ffi::Rust_OverloadClass_get__SWIG_1(self.ptr) }
-    }
-}
-
-pub fn add_int_int(a: i32, b: i32) -> i32 {
-    unsafe { ffi::Rust_add__SWIG_0(a, b) }
-}
-
-pub fn add_int_int_int(a: i32, b: i32, c: i32) -> i32 {
-    unsafe { ffi::Rust_add__SWIG_1(a, b, c) }
-}
-
-pub fn add_f64_f64(a: f64, b: f64) -> f64 {
-    unsafe { ffi::Rust_add__SWIG_2(a, b) }
 }
 

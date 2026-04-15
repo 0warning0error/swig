@@ -243,7 +243,7 @@ impl vecintp {
 
 impl vecintpTrait for vecintp {
     fn get(&mut self, index: i32) -> int {
-        unsafe { ffi::Rust_vecintp_get__SWIG_0(self.ptr, index) }
+        unsafe { std::mem::transmute::<i32, int>(ffi::Rust_vecintp_get__SWIG_0(self.ptr, index)) }
     }
     fn set(&mut self, index: i32, val: *mut c_void) {
         unsafe { ffi::Rust_vecintp_set__SWIG_0(self.ptr, index, val) }

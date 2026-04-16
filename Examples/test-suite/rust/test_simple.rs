@@ -48,10 +48,6 @@ mod ffi {
     }
 
     extern "C" {
-        pub fn Rust_static_add__SWIG_0(jarg1: c_int, jarg2: c_int) -> c_int;
-    }
-
-    extern "C" {
         pub fn Rust_MethodTest_const_method__SWIG_0(jarg1: *const c_void) -> c_int;
     }
 
@@ -138,12 +134,6 @@ impl MethodTest {
 impl MethodTest {
     pub fn MethodTest_static_add_int_int(a: i32, b: i32) -> i32 {
         unsafe { ffi::Rust_MethodTest_static_add__SWIG_0(a, b) }
-    }
-}
-
-impl MethodTest {
-    pub fn static_add_int_int(a: i32, b: i32) -> i32 {
-        unsafe { ffi::Rust_static_add__SWIG_0(a, b) }
     }
 }
 

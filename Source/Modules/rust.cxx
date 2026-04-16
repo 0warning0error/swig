@@ -2912,14 +2912,24 @@ private:
       
       Append(ffi_call, ")");
       
-      // Build unsafe wrapper
-      String *unsafe_ffi = NewStringf("unsafe { %s }", ffi_call);
+      // Check if typemap already contains unsafe - if so, don't double-wrap
+      bool typemap_has_unsafe = (Strstr(rsout_tm, "unsafe") != NULL);
+      
+      // Build result expression - only wrap in unsafe if typemap doesn't already have it
+      String *result_expr = NULL;
+      if (typemap_has_unsafe) {
+        // Typemap has its own unsafe, pass FFI call directly
+        result_expr = Copy(ffi_call);
+      } else {
+        // Wrap FFI call in unsafe
+        result_expr = NewStringf("unsafe { %s }", ffi_call);
+      }
       Delete(ffi_call);
       
       // Apply typemap template
       String *wrapped = Copy(rsout_tm);
-      Replaceall(wrapped, "$result", unsafe_ffi);
-      Delete(unsafe_ffi);
+      Replaceall(wrapped, "$result", result_expr);
+      Delete(result_expr);
       
       // Output the wrapped result with proper indentation
       if (class_impl_name) {
@@ -3740,14 +3750,24 @@ private:
               Append(ffi_call, ")");
               Delete(params_str);
               
-              // Build the unsafe wrapper
-              String *unsafe_ffi = NewStringf("unsafe { %s }", ffi_call);
+              // Check if typemap already contains unsafe - if so, don't double-wrap
+              bool typemap_has_unsafe = (Strstr(rsout_tm, "unsafe") != NULL);
+              
+              // Build result expression - only wrap in unsafe if typemap doesn't already have it
+              String *result_expr = NULL;
+              if (typemap_has_unsafe) {
+                // Typemap has its own unsafe, pass FFI call directly
+                result_expr = Copy(ffi_call);
+              } else {
+                // Wrap FFI call in unsafe
+                result_expr = NewStringf("unsafe { %s }", ffi_call);
+              }
               Delete(ffi_call);
               
-              // Replace $result in the typemap with the unsafe FFI call
+              // Replace $result in the typemap with the result expression
               String *result = Copy(rsout_tm);
-              Replaceall(result, "$result", unsafe_ffi);
-              Delete(unsafe_ffi);
+              Replaceall(result, "$result", result_expr);
+              Delete(result_expr);
               
               Printf(f_wrapper_code, "%s\n", result);
               Delete(result);
@@ -3764,9 +3784,11 @@ private:
             
             if (is_custom_type && return_type_name) {
               // Wrap the pointer result in the struct
+              // Need to handle the case where FFI returns *const but struct expects *mut
               Printf(f_wrapper_code, "%s { ptr: unsafe { ffi::%s(self.ptr", return_type_name, wname);
               emitFFIParams(params, false);
-              Printf(f_wrapper_code, ") } }\n");
+              // Cast to *mut c_void in case FFI returns *const c_void
+              Printf(f_wrapper_code, ") as *mut std::ffi::c_void } }\n");
               Delete(return_type_name);
             } else if (!used_rsout_typemap && !is_bool_type && !is_enum_type) {
               // Basic type return - just call FFI (no typemap found)
@@ -3966,9 +3988,11 @@ private:
                   Delete(enum_name);
                 } else if (return_is_swigstring) {
                   // SwigString return type - wrap the pointer
+                  // Need to handle the case where FFI returns *const but struct expects *mut
                   Printf(f_wrapper_code, "SwigString { ptr: unsafe { ffi::%s(self.ptr", wname);
                   emitFFIParams(params, false);
-                  Printf(f_wrapper_code, ") } }\n");
+                  // Cast to *mut c_void in case FFI returns *const c_void
+                  Printf(f_wrapper_code, ") as *mut std::ffi::c_void } }\n");
                 } else if (return_is_string) {
                   // String return type - convert from C string
                   Printf(f_wrapper_code, "unsafe {\n");
